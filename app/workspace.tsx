@@ -265,6 +265,14 @@ export default function Workspace() {
             </strong>
           </span>
           <div className="actions">
+            <a
+              className="guide-entry"
+              href="/guide"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              使用指南 ↗
+            </a>
             <button className="secondary" onClick={() => navigate("import")}>
               导入 Excel
             </button>
