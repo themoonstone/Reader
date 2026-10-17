@@ -1,8 +1,10 @@
 # ReadWords
 
-Mac 本地个人英语语料库。当前完成首个闭环及 PRD v0.3 的 Excel 严格 P1 导入：**Source → 手动采集 → Inbox → 保存 → 搜索详情**，并非完整 R0。
+Mac 本地个人英语语料库。当前实现范围为首个闭环及 Excel 严格 P1 导入：**Source → 手动采集 → Inbox → 保存 → 搜索详情**，并非完整 R0。
 
 第一次使用请看 [中文使用指南](documents/USER_GUIDE.md)，或启动后打开 [网站内使用指南](http://127.0.0.1:3000/guide)。本 README 主要用于开发、启动及验收。
+
+功能现状见 [Feature List](documents/FEATURE_LIST.md)；后续计划见 [云端与多设备升级方案](documents/07-云端与多设备升级方案.md)。[PRD v0.4](documents/02-产品需求文档.md) 包含已确认本地基线与尚未实现的 C 阶段，不代表当前已上云。
 
 ## 启动
 
