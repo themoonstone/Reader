@@ -1,0 +1,74 @@
+name: readwords
+services:
+  app:
+    image: readwords:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      READWORDS_MODE: cloud
+      READWORDS_ORIGIN: https://${READWORDS_DOMAIN:?set domain}
+      READWORDS_DB_PATH: /app/data/readwords.sqlite
+      READWORDS_READ_ONLY: ${READWORDS_READ_ONLY:-0}
+      SUPABASE_URL: ${SUPABASE_URL:?set auth URL}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?set publishable key}
+      READWORDS_OWNER_ID: ${READWORDS_OWNER_ID:?set owner UUID}
+      READWORDS_OWNER_EMAIL: ${READWORDS_OWNER_EMAIL:?set owner email}
+      TZ: Asia/Shanghai
+    volumes:
+      - learning-data:/app/data
+    networks: [private]
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      READWORDS_DOMAIN: ${READWORDS_DOMAIN:?set domain}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [private]
+    depends_on:
+      app:
+        condition: service_healthy
+  backup:
+    image: readwords:local
+    restart: unless-stopped
+    init: true
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["while true; do node scripts/backup-job.mts; sleep 86400; done"]
+    environment:
+      READWORDS_DB_PATH: /app/data/readwords.sqlite
+      READWORDS_BACKUP_DIR: /app/backups
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:?set independent encrypted backup repository}
+      RESTIC_PASSWORD_FILE: /run/secrets/restic_password
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      TZ: Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "node", "-e", "const fs=require('node:fs');try{if(Date.now()-fs.statSync('/app/backups/.last-success').mtimeMs>26*3600000)process.exit(1)}catch{process.exit(1)}"]
+      interval: 60s
+      timeout: 5s
+      start_period: 60s
+    secrets: [restic_password]
+    volumes:
+      - learning-data:/app/data:ro
+      - backup-cache:/app/backups
+    networks: [private]
+    depends_on:
+      app:
+        condition: service_healthy
+secrets:
+  restic_password:
+    file: ${RESTIC_PASSWORD_FILE:?set host password file outside repository}
+volumes:
+  learning-data:
+  backup-cache:
+  caddy-data:
+  caddy-config:
+networks:
+  private:

@@ -42,6 +42,9 @@ export async function api<T>(
       "WORKSPACE_CHANGED",
     );
   const data = await response.json();
+  if (response.status === 401) {
+    data.error = "登录已失效。请先复制或保存当前输入，再在新标签页登录后重试。";
+  }
   if (!response.ok)
     throw new RequestError(
       data.error || "操作失败，请重试",

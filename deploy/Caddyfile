@@ -1,0 +1,24 @@
+{$READWORDS_DOMAIN} {
+  @auth path /api/auth/*
+  request_body @auth {
+    max_size 8192
+  }
+  @restore path /api/backup/preview
+  request_body @restore {
+    max_size 52428800
+  }
+  @imports path /api/imports/*
+  request_body @imports {
+    max_size 8388608
+  }
+  @ordinary {
+    not path /api/auth/* /api/backup/preview /api/imports/*
+  }
+  request_body @ordinary {
+    max_size 131072
+  }
+  reverse_proxy app:3000 {
+    header_up Host {host}
+    header_up -X-Forwarded-Host
+  }
+}

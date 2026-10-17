@@ -1,3 +1,10 @@
+import { authContext, type AuthContext } from "./auth";
+import {
+  AccessError,
+  runtimeConfig,
+  requestOrigin,
+  writeOrigin,
+} from "./runtime-config";
 import { Review } from "./review";
 import { z } from "zod";
 import { AppError, getStore, type Store } from "./store";
@@ -17,22 +24,19 @@ export async function handle(
   store?: Store,
 ): Promise<Response> {
   const headers: Record<string, string> = { "Cache-Control": "no-store" };
+  let auth: AuthContext | undefined;
+  const json = (data: unknown, init: ResponseInit) => {
+    const r = Response.json(data, init);
+    return auth ? auth.apply(r) : r;
+  };
   try {
-    const url = new URL(request.url);
-    if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname))
-      throw new AppError("仅允许本机访问", 403);
-    // Next.js may reconstruct request.url with localhost even when the browser
-    // visited 127.0.0.1. Use the actual, strictly loopback-only Host, never X-Forwarded-Host.
-    const host = request.headers.get("host") || url.host;
-    if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$/.test(host))
-      throw new AppError("仅允许本机 Host", 403);
-    const origin = new URL(`${url.protocol}//${host}`).origin;
+    const url = new URL(request.url),
+      config = runtimeConfig();
+    const origin = requestOrigin(request, config);
+    auth = authContext(request, config);
+    await auth.owner();
     if (!["GET", "HEAD"].includes(request.method)) {
-      if (
-        request.headers.get("origin") !== origin ||
-        request.headers.get("sec-fetch-site") === "cross-site"
-      )
-        throw new AppError("拒绝跨站写入请求", 403);
+      writeOrigin(request, origin);
       if (!request.headers.get("content-type")?.startsWith("application/json"))
         throw new AppError("请使用 JSON 请求", 415);
     }
@@ -77,7 +81,7 @@ export async function handle(
               url.searchParams.get("sourceId") || "",
             );
       else throw new AppError("接口不存在", 404);
-      return Response.json(data, { headers });
+      return json(data, { headers });
     }
     const limit =
       resource === "backup" && id === "preview"
@@ -107,6 +111,15 @@ export async function handle(
     } catch {
       throw new AppError("JSON 格式无效");
     }
+    if (
+      db.isReadOnly &&
+      !(resource === "backup" && ["export", "snapshot"].includes(id))
+    )
+      throw new AppError(
+        "学习库处于维护只读状态，请稍后重试",
+        503,
+        "READ_ONLY",
+      );
     const body = z.record(z.string(), z.unknown()).parse(parsed);
     if (request.headers.get("X-ReadWords-Generation") !== db.generation)
       throw new AppError(
@@ -267,10 +280,10 @@ export async function handle(
           .parse(body),
       );
     else throw new AppError("接口不存在", 404);
-    return Response.json(data, { headers });
+    return json(data, { headers });
   } catch (error) {
     if (error instanceof z.ZodError)
-      return Response.json(
+      return json(
         {
           error: error.issues
             .map((i) => `${i.path.join(".")}: ${i.message}`)
@@ -279,14 +292,14 @@ export async function handle(
         },
         { status: 400, headers },
       );
-    if (error instanceof AppError)
-      return Response.json(
+    if (error instanceof AppError || error instanceof AccessError)
+      return json(
         { error: error.message, code: error.code },
         { status: error.status, headers },
       );
     // Do not log user material or the SQLite exception's potentially sensitive SQL.
     console.error("READWORDS_STORAGE_ERROR");
-    return Response.json(
+    return json(
       {
         error: "本地存储操作失败，请保留输入后重试，并检查磁盘空间。",
         code: "STORAGE_ERROR",

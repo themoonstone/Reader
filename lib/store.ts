@@ -54,6 +54,18 @@ export class Store {
       const version = Number(
         (this.db.prepare("PRAGMA user_version").get() as Row).user_version,
       );
+      if (
+        version < 3 &&
+        (process.env.READWORDS_READ_ONLY === "1" ||
+          (version >= 2 &&
+            this.one("SELECT value FROM workspace_meta WHERE key='maintenance'")
+              ?.value === "1"))
+      )
+        throw new AppError(
+          "维护只读期间不能初始化或升级数据库，请先保留快照并按计划解除维护",
+          503,
+          "READ_ONLY",
+        );
       if (version > 3)
         throw new AppError("数据库版本高于当前程序，请使用更新版本", 500);
       if (version === 0)
@@ -113,9 +125,10 @@ export class Store {
         this.transaction(() => createReviewTables(this.db));
       }
       this.reviewReady = true;
-      this.transaction(() =>
-        restartReview(this.db, new Date(this.clock()).toISOString()),
-      );
+      if (!this.isReadOnly)
+        this.transaction(() =>
+          restartReview(this.db, new Date(this.clock()).toISOString()),
+        );
     } catch (error) {
       this.db.close();
       throw error;
@@ -147,13 +160,32 @@ export class Store {
   close() {
     this.db.close();
   }
-  transaction<T>(fn: () => T): T {
+  get isReadOnly() {
+    return (
+      process.env.READWORDS_READ_ONLY === "1" ||
+      this.one("SELECT value FROM workspace_meta WHERE key='maintenance'")
+        ?.value === "1"
+    );
+  }
+  transaction<T>(fn: () => T, options: { readOnly?: boolean } = {}): T {
     const depth = this.transactionDepth++;
     const savepoint = `rw_${depth}`;
     try {
-      this.db.exec(depth === 0 ? "BEGIN IMMEDIATE" : `SAVEPOINT ${savepoint}`);
+      this.db.exec(
+        depth === 0
+          ? options.readOnly
+            ? "BEGIN"
+            : "BEGIN IMMEDIATE"
+          : `SAVEPOINT ${savepoint}`,
+      );
+      if (!options.readOnly && this.reviewReady && this.isReadOnly)
+        throw new AppError(
+          "学习库处于维护只读状态，请稍后重试",
+          503,
+          "READ_ONLY",
+        );
       const result = fn();
-      if (depth === 0 && this.reviewReady)
+      if (depth === 0 && this.reviewReady && !options.readOnly)
         reconcileReview(this.db, new Date(this.clock()).toISOString());
       this.db.exec(depth === 0 ? "COMMIT" : `RELEASE ${savepoint}`);
       return result;
@@ -199,16 +231,18 @@ export class Store {
     );
   }
   createSource(input: unknown) {
-    const data = sourceSchema.parse(input);
-    const old = this.one("SELECT id FROM sources WHERE id=?", data.id);
-    if (old) return this.getSource(data.id);
-    const time = now();
-    this.db
-      .prepare(
-        "INSERT INTO sources(id,type,title,data,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-      )
-      .run(data.id, data.type, data.title, JSON.stringify(data), time, time);
-    return this.getSource(data.id);
+    return this.transaction(() => {
+      const data = sourceSchema.parse(input);
+      const old = this.one("SELECT id FROM sources WHERE id=?", data.id);
+      if (old) return this.getSource(data.id);
+      const time = now();
+      this.db
+        .prepare(
+          "INSERT INTO sources(id,type,title,data,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+        )
+        .run(data.id, data.type, data.title, JSON.stringify(data), time, time);
+      return this.getSource(data.id);
+    });
   }
   updateSource(
     id: string,
@@ -274,18 +308,20 @@ export class Store {
     ).map((r) => this.getDraft(String(r.id)));
   }
   createDraft(id: string, input: unknown) {
-    if (!/^[a-f0-9-]{36}$/i.test(id)) throw new AppError("采集标识无效");
-    if (this.one("SELECT id FROM drafts WHERE id=?", id))
+    return this.transaction(() => {
+      if (!/^[a-f0-9-]{36}$/i.test(id)) throw new AppError("采集标识无效");
+      if (this.one("SELECT id FROM drafts WHERE id=?", id))
+        return this.getDraft(id);
+      const data = draftSchema.parse(input);
+      this.checkSource(data);
+      const time = now();
+      this.db
+        .prepare(
+          "INSERT INTO drafts(id,source_id,data,created_at,updated_at) VALUES(?,?,?,?,?)",
+        )
+        .run(id, data.sourceId || null, JSON.stringify(data), time, time);
       return this.getDraft(id);
-    const data = draftSchema.parse(input);
-    this.checkSource(data);
-    const time = now();
-    this.db
-      .prepare(
-        "INSERT INTO drafts(id,source_id,data,created_at,updated_at) VALUES(?,?,?,?,?)",
-      )
-      .run(id, data.sourceId || null, JSON.stringify(data), time, time);
-    return this.getDraft(id);
+    });
   }
   updateDraft(id: string, input: unknown, version: number, state?: string) {
     return this.transaction(() => {

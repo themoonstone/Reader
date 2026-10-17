@@ -11,3 +11,5 @@ test-results/
 .DS_Store
 *.sqlite*
 resources/*.xlsx
+
+.next-cloud-e2e/

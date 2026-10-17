@@ -1,0 +1,16 @@
+.git
+node_modules
+.next*
+data
+resources
+.env*
+!.env.example
+test-results
+playwright-report
+**/*.sqlite*
+**/*.xlsx
+*.tsbuildinfo
+
+tests
+test-results
+playwright*.ts

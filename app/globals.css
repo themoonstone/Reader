@@ -1704,3 +1704,19 @@ dialog .type-tabs button {
     flex-wrap: wrap;
   }
 }
+
+.auth-shell {
+  max-width: 460px;
+  margin: 8vh auto;
+  padding: 24px;
+}
+.auth-shell form {
+  margin: 24px 0;
+}
+.auth-shell input {
+  width: 100%;
+}
+.account {
+  overflow-wrap: anywhere;
+  padding: 0 16px 12px;
+}

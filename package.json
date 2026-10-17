@@ -12,12 +12,17 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "test:e2e": "playwright test",
-    "format": "prettier --write app lib tests scripts next.config.ts playwright.config.ts postcss.config.mjs package.json tsconfig.json",
-    "format:check": "prettier --check app lib tests scripts next.config.ts playwright.config.ts postcss.config.mjs package.json tsconfig.json",
+    "format": "prettier --write app lib tests scripts proxy.ts next.config.ts playwright.config.ts playwright.cloud.config.ts postcss.config.mjs package.json tsconfig.json",
+    "format:check": "prettier --check app lib tests scripts proxy.ts next.config.ts playwright.config.ts playwright.cloud.config.ts postcss.config.mjs package.json tsconfig.json",
     "guide:generate": "node --import tsx scripts/generate-guide.mts",
-    "guide:check": "node --import tsx scripts/generate-guide.mts --check"
+    "guide:check": "node --import tsx scripts/generate-guide.mts --check",
+    "ops": "node scripts/ops.mts",
+    "backup:run": "node scripts/backup-job.mts",
+    "test:e2e:cloud": "playwright test --config playwright.cloud.config.ts"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.118.0",
     "exceljs": "^4.4.0",
     "next": "^16.0.0",
     "react": "^19.2.0",

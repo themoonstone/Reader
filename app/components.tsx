@@ -48,6 +48,13 @@ export function ErrorBox({ error }: { error: string }) {
   return error ? (
     <div className="error" role="alert">
       {error}
+      {error.includes("登录") && (
+        <p>
+          <a href="/login" target="_blank" rel="noopener noreferrer">
+            在新标签页登录
+          </a>
+        </p>
+      )}
     </div>
   ) : null;
 }

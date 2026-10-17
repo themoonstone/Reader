@@ -4,7 +4,7 @@ Mac 本地个人英语语料库。当前实现范围为首个闭环及 Excel 严
 
 第一次使用请看 [中文使用指南](documents/USER_GUIDE.md)，或启动后打开 [网站内使用指南](http://127.0.0.1:3000/guide)。本 README 主要用于开发、启动及验收。
 
-功能现状见 [Feature List](documents/FEATURE_LIST.md)；后续计划见 [云端与多设备升级方案](documents/07-云端与多设备升级方案.md)。[PRD v0.7](documents/02-产品需求文档.md) 包含已确认本地基线与尚未实现的 C 阶段，不代表当前已上云。
+功能现状见 [Feature List](documents/FEATURE_LIST.md)；后续计划见 [云端与多设备升级方案](documents/07-云端与多设备升级方案.md)。[PRD v0.8](documents/02-产品需求文档.md) 包含已确认本地基线与尚未实现的 C 阶段，不代表当前已上云。
 
 Review 需求见 [低压力复习需求与技术设计](documents/11-低压力Review需求与技术设计.md) 和 [开发/验收计划](documents/12-Review开发计划与验收清单.md)：手动选择复习池，限时限量，无补课欠账。当前 RV-A 认义功能已实现，完整 Mac 验收待补，RV-B 未开始。实施证据见 [Review 自检记录](documents/13-Review实现与自检记录.md)。
 
@@ -84,3 +84,8 @@ E2E 使用本机已安装的 Google Chrome、独立 3100 端口和系统临时�
 
 详细规则见 [PRD](documents/02-产品需求文档.md)、[技术设计](documents/04-技术设计与首个闭环.md) 和 [阶段验收记录](documents/05-首个闭环验收记录.md)。
 # Reader
+
+
+上云准备现已提供邮箱＋密码（Supabase Auth、唯一所有者）、服务端权限校验、维护只读、原生 SQLite 一致性备份/核对、Docker/Caddy 与定时 restic 加密备份配置。默认仍为本地模式，未部署线上服务。真实认证项目、SMTP、服务器/域名和异地备份仓库尚待配置与验收；不是 Git push 后自动上云。
+
+配置与完整操作见 [邮箱登录及部署手册](documents/15-邮箱登录配置与部署操作手册.md)，实现及真实缺口见 [上云自检记录](documents/16-上云准备实现与自检记录.md)。追加检查命令：`npm run test:e2e:cloud`（仅合成认证服务和临时库）、`npm run ops -- manifest /absolute/path/readwords.sqlite`。Docker 文件位于 `deploy/`；当前环境没有 Docker，不宣称已通过真实容器部署。

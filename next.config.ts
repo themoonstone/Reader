@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 const config: NextConfig = {
+  output: "standalone",
+  logging: { incomingRequests: { ignore: [/\/auth\/confirm/] } },
   distDir: process.env.READWORDS_DIST_DIR || ".next",
   serverExternalPackages: ["exceljs"],
   poweredByHeader: false,

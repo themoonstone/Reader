@@ -84,7 +84,7 @@ export default function BackupSettings() {
         下载全库 JSON 备份
       </button>
       <hr />
-      <h3>从 JSON 替换本地学习库</h3>
+      <h3>从 JSON 替换当前学习库</h3>
       <p>
         不是合并。请先保存或复制所有窗口中未保存的输入。恢复会替换当前全库，其他旧窗口必须刷新后才能继续写入。
       </p>
@@ -184,8 +184,7 @@ export default function BackupSettings() {
       <hr />
       <h3>恢复前快照</h3>
       <p>
-        预览时自动生成，不会自动清理。新预览会使超过数量上限的旧预览失效；重启服务后请重新预览。快照与数据库在同一台
-        Mac，不能替代异地备份。
+        预览时自动生成，不会自动清理。新预览会使超过数量上限的旧预览失效；重启服务后请重新预览。快照与数据库存放在同一设备或数据卷，不能替代异地备份。
       </p>
       {status && (
         <>
@@ -217,7 +216,8 @@ export default function BackupSettings() {
       )}
       <p className="muted">
         下载快照后，用上方“选择 JSON 备份”预览并恢复。升级 schema v1→v2、v2→v3
-        前另有 SQLite 一致性快照供人工应急；定时自动备份尚未实现。
+        前另有 SQLite
+        一致性快照供人工应急；定时加密备份脚本已提供，需完成部署和异地仓库配置后才会运行。
       </p>
     </section>
   );

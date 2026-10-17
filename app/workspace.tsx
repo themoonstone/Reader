@@ -13,6 +13,7 @@ import { Capture, Empty, ErrorBox, Modal, SourceForm } from "./components";
 import DraftEditor from "./draft-editor";
 import Maintenance, { Trash } from "./maintenance";
 import ReviewPage, { ReviewDetail } from "./review";
+import Account from "./account";
 import BackupSettings from "./backup-settings";
 import ExcelImporter from "./excel-importer";
 
@@ -22,7 +23,7 @@ const symbols: Record<string, string> = {
   Writing: "✎",
   Manual: "✧",
 };
-export default function Workspace() {
+export default function Workspace({ cloud = false }: { cloud?: boolean }) {
   const [view, setView] = useState("library");
   const [sources, setSources] = useState<Source[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -134,6 +135,19 @@ export default function Workspace() {
       clearTimeout(timer);
     };
   }, [view, query, type, priority, archived, revision]);
+  useEffect(() => {
+    if (!cloud) return;
+    const foreground = () => {
+      if (document.hidden || view === "review") return;
+      if (dirty.current || capture || sourceModal || view === "import") {
+        setNotice("其他设备的数据可能已变化；当前输入保留，保存后再刷新。");
+        return;
+      }
+      setRevision((r) => r + 1);
+    };
+    document.addEventListener("visibilitychange", foreground);
+    return () => document.removeEventListener("visibilitychange", foreground);
+  }, [cloud, capture, sourceModal, view]);
   const sourceAdded = (source: Source) =>
     setSources((s) => [source, ...s.filter((v) => v.id !== source.id)]);
   const activeSource = view.startsWith("source/")
@@ -208,6 +222,7 @@ export default function Workspace() {
             ReadWords<small>你的个人表达库</small>
           </div>
         </a>
+        <Account />
         <span className="nav-label">WORKSPACE</span>
         <nav aria-label="主导航">
           {[
@@ -248,7 +263,8 @@ export default function Workspace() {
         </div>
         <button className="local-status" onClick={() => navigate("settings")}>
           <span className="status-dot" />
-          本地工作空间<span>⚙</span>
+          {cloud ? "云端工作空间" : "本地工作空间"}
+          <span>⚙</span>
         </button>
       </aside>
       <main>
@@ -299,7 +315,7 @@ export default function Workspace() {
           )}
           {loading ? (
             <div className="empty" role="status">
-              正在读取本地工作空间…
+              正在读取工作空间…
             </div>
           ) : (
             <>
@@ -824,15 +840,27 @@ export default function Workspace() {
                 <>
                   <div className="page-heading">
                     <div>
-                      <span className="eyebrow">LOCAL WORKSPACE</span>
-                      <h1>本地工作空间</h1>
+                      <span className="eyebrow">
+                        {cloud ? "PRIVATE WORKSPACE" : "LOCAL WORKSPACE"}
+                      </span>
+                      <h1>{cloud ? "云端工作空间" : "本地工作空间"}</h1>
                     </div>
                   </div>
                   <section className="panel settings-panel">
-                    <h2>数据保存在这台 Mac</h2>
-                    <p>默认位置：项目目录 / data / readwords.sqlite</p>
+                    <h2>
+                      {cloud
+                        ? "学习数据保存在应用服务器"
+                        : "数据保存在这台 Mac"}
+                    </h2>
                     <p>
-                      停止服务后数据仍保留。当前无账号、云端同步或自动外部请求。
+                      {cloud
+                        ? "使用服务器持久数据卷；手机、iPad 和 Mac 访问同一份学习库。"
+                        : "默认位置：项目目录 / data / readwords.sqlite"}
+                    </p>
+                    <p>
+                      {cloud
+                        ? "已启用私有邮箱登录。请确认服务器自动备份已配置，并定期演练恢复。"
+                        : "停止服务后数据仍保留。本地模式无需登录，没有自动云端副本。"}
                     </p>
 
                     <p className="muted">

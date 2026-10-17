@@ -116,31 +116,34 @@ const tables = [
   ...reviewTables,
 ] as const;
 export function exportBackup(store: Store): Backup {
-  return store.transaction(() => {
-    const rows = Object.fromEntries(
-      tables.map((table) => [
-        table,
-        store
-          .all(`SELECT * FROM ${table} ORDER BY id`)
-          .map((row) =>
-            Object.fromEntries(
-              Object.entries(row).map(([k, v]) => [
-                k,
-                ["data", "snapshot", "policy"].includes(k)
-                  ? JSON.parse(String(v))
-                  : v,
-              ]),
+  return store.transaction(
+    () => {
+      const rows = Object.fromEntries(
+        tables.map((table) => [
+          table,
+          store
+            .all(`SELECT * FROM ${table} ORDER BY id`)
+            .map((row) =>
+              Object.fromEntries(
+                Object.entries(row).map(([k, v]) => [
+                  k,
+                  ["data", "snapshot", "policy"].includes(k)
+                    ? JSON.parse(String(v))
+                    : v,
+                ]),
+              ),
             ),
-          ),
-      ]),
-    );
-    return backupSchema.parse({
-      format: "readwords-backup",
-      schema_version: 3,
-      exported_at: new Date().toISOString(),
-      ...rows,
-    });
-  });
+        ]),
+      );
+      return backupSchema.parse({
+        format: "readwords-backup",
+        schema_version: 3,
+        exported_at: new Date().toISOString(),
+        ...rows,
+      });
+    },
+    { readOnly: true },
+  );
 }
 function invalid(message: string): never {
   throw new AppError(`备份无效：${message}`);

@@ -73,6 +73,7 @@ export class Review {
     });
   }
   private sweep() {
+    if (this.store.isReadOnly) return;
     this.store.transaction(() => restartReview(this.store.db, this.now()));
   }
   pool(): ReviewPool {
