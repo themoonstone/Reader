@@ -1,13 +1,13 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdirSync, chmodSync, openSync, fsyncSync, closeSync } from "node:fs";
+import { dirname, resolve, join, basename } from "node:path";
 import {
   draftSchema,
+  expressionSchema,
+  validateContext,
   sourceSchema,
   normalize,
-  validDate,
-  parseTimestamp,
   type Draft,
   type DraftInput,
   type Source,
@@ -29,21 +29,27 @@ const now = () => new Date().toISOString();
 export class Store {
   db: DatabaseSync;
   private transactionDepth = 0;
-  constructor(path: string) {
+  readonly snapshotDir: string;
+  constructor(readonly path: string) {
+    this.snapshotDir =
+      path === ":memory:"
+        ? resolve("/tmp/readwords-memory-snapshots", randomUUID())
+        : resolve(dirname(resolve(path)), "snapshots", basename(path));
     if (path !== ":memory:")
       mkdirSync(dirname(resolve(path)), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
-    this.db.exec(
-      "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;",
-    );
-    const version = Number(
-      (this.db.prepare("PRAGMA user_version").get() as Row).user_version,
-    );
-    if (version > 1)
-      throw new AppError("数据库版本高于当前程序，请使用更新版本", 500);
-    if (version === 0)
-      this.transaction(() =>
-        this.db.exec(`
+    try {
+      this.db.exec(
+        "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;",
+      );
+      const version = Number(
+        (this.db.prepare("PRAGMA user_version").get() as Row).user_version,
+      );
+      if (version > 2)
+        throw new AppError("数据库版本高于当前程序，请使用更新版本", 500);
+      if (version === 0)
+        this.transaction(() =>
+          this.db.exec(`
       CREATE TABLE sources (id TEXT PRIMARY KEY, type TEXT NOT NULL, title TEXT NOT NULL, data TEXT NOT NULL,
         lifecycle TEXT NOT NULL DEFAULT 'active', version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE expressions (id TEXT PRIMARY KEY, term TEXT NOT NULL, normalized_term TEXT NOT NULL, meaning TEXT NOT NULL,
@@ -60,7 +66,49 @@ export class Store {
       CREATE INDEX contexts_source ON contexts(source_id);
       PRAGMA user_version=1;
     `),
-      );
+        );
+      if (version === 1) {
+        // VACUUM INTO is a consistent SQLite snapshot even when the source uses WAL.
+        mkdirSync(this.snapshotDir, { recursive: true, mode: 0o700 });
+        const snapshot = join(
+          this.snapshotDir,
+          `before-schema-v2-${randomUUID()}.sqlite`,
+        );
+        this.db.prepare("VACUUM INTO ?").run(snapshot);
+        chmodSync(snapshot, 0o600);
+        for (const target of [snapshot, this.snapshotDir]) {
+          const fd = openSync(target, "r");
+          try {
+            fsyncSync(fd);
+          } finally {
+            closeSync(fd);
+          }
+        }
+      }
+      if (version < 2)
+        this.transaction(() =>
+          this.db.exec(`
+      ALTER TABLE contexts ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'active';
+      ALTER TABLE contexts ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE contexts ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
+      ALTER TABLE contexts ADD COLUMN deleted_by TEXT;
+      UPDATE contexts SET updated_at=created_at;
+      ALTER TABLE expressions ADD COLUMN restore_lifecycle TEXT NOT NULL DEFAULT 'active';
+      CREATE TABLE workspace_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT INTO workspace_meta VALUES('generation','${randomUUID()}');
+      PRAGMA user_version=2;
+    `),
+        );
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
+  }
+  get generation() {
+    return String(
+      this.one("SELECT value FROM workspace_meta WHERE key='generation'")!
+        .value,
+    );
   }
   close() {
     this.db.close();
@@ -103,7 +151,7 @@ export class Store {
       updatedAt: String(row.updated_at),
       expressionCount: Number(
         this.one(
-          "SELECT COUNT(DISTINCT expression_id) AS n FROM contexts WHERE source_id=?",
+          "SELECT COUNT(DISTINCT c.expression_id) AS n FROM contexts c JOIN expressions e ON e.id=c.expression_id WHERE c.source_id=? AND c.lifecycle='active' AND e.lifecycle!='deleted'",
           id,
         )!.n,
       ),
@@ -252,48 +300,12 @@ export class Store {
         return { expressionId: draft.expressionId, replay: true };
       this.checkVersion(draft.version, options.version);
       if (draft.state !== "pending") throw new AppError("请先恢复这条草稿");
-      const d = draftSchema.parse(draft.data);
-      this.checkSource(d, true);
-      if (!d.meaning) throw new AppError("请填写语境释义");
-      if (d.whySaved === "other" && !d.note)
-        throw new AppError("选择其他原因时请填写备注");
-      if (d.occurredOn && !validDate(d.occurredOn))
-        throw new AppError("接触日期无效");
-      if (d.whySaved === "misheard" && d.sourceType !== "Listening")
-        throw new AppError("误听原因仅用于 Listening");
-      if (
-        ["Reading", "Listening"].includes(d.sourceType) &&
-        d.eventKind !== "exposure"
-      )
-        throw new AppError("阅读/听力事件应为遇见");
-      if (d.sourceType === "Writing" && d.eventKind === "exposure")
-        throw new AppError("请选择写作事件类型");
-      if (
-        d.eventKind === "output_corrected" &&
-        (d.sourceType !== "Writing" ||
-          !d.originalExpression ||
-          !d.correctedExpression ||
-          d.originalExpression === d.correctedExpression)
-      )
-        throw new AppError("写作纠正需填写不同的原表达和改进表达");
-      const source = this.getSource(d.sourceId);
-      if (d.sourceType === "Listening") {
-        let seconds: number | null;
-        try {
-          seconds = parseTimestamp(d.timestamp);
-        } catch (e) {
-          throw new AppError((e as Error).message);
-        }
-        if (
-          seconds !== null &&
-          source.duration !== "" &&
-          seconds > source.duration
-        )
-          throw new AppError("时间位置超过材料时长");
-        d.timestampSeconds = seconds;
-      } else {
-        if (d.timestamp) throw new AppError("时间位置仅适用于 Listening");
-        d.timestampSeconds = null;
+      this.checkSource(draft.data, true);
+      let d: DraftInput;
+      try {
+        d = validateContext(draft.data, this.getSource(draft.data.sourceId));
+      } catch (e) {
+        throw new AppError((e as Error).message);
       }
       const candidates = this.candidates(d.term);
       let expressionId = options.expressionId;
@@ -311,7 +323,7 @@ export class Store {
         !options.allowDuplicate &&
         expressionId &&
         this.one(
-          "SELECT id FROM contexts WHERE expression_id=? AND fingerprint=?",
+          "SELECT id FROM contexts WHERE expression_id=? AND fingerprint=? AND lifecycle='active'",
           expressionId,
           fingerprint,
         )
@@ -348,7 +360,7 @@ export class Store {
       const contextId = randomUUID();
       this.db
         .prepare(
-          "INSERT INTO contexts(id,expression_id,source_id,event_kind,data,fingerprint,created_at) VALUES(?,?,?,?,?,?,?)",
+          "INSERT INTO contexts(id,expression_id,source_id,event_kind,data,fingerprint,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
         )
         .run(
           contextId,
@@ -357,6 +369,7 @@ export class Store {
           d.eventKind,
           JSON.stringify(d),
           fingerprint,
+          time,
           time,
         );
       this.db
@@ -373,19 +386,24 @@ export class Store {
   expression(id: string): Expression {
     const r = this.one("SELECT * FROM expressions WHERE id=?", id);
     if (!r) throw new AppError("表达不存在", 404, "NOT_FOUND");
-    const contexts: Context[] = this.all(
+    const allContexts: Context[] = this.all(
       "SELECT c.*,s.title AS source_title,s.type AS source_type FROM contexts c JOIN sources s ON s.id=c.source_id WHERE expression_id=? ORDER BY c.created_at DESC,c.id",
       id,
     ).map((c) => ({
       id: String(c.id),
+      expressionId: String(c.expression_id),
+      version: Number(c.version),
+      lifecycle: String(c.lifecycle),
       sourceId: String(c.source_id),
       sourceTitle: String(c.source_title),
       sourceType: String(c.source_type),
       data: JSON.parse(String(c.data)),
       createdAt: String(c.created_at),
     }));
+    const contexts = allContexts.filter((c) => c.lifecycle === "active");
     return {
       id,
+      version: Number(r.version),
       term: String(r.term),
       meaning: String(r.meaning),
       type: String(r.type),
@@ -399,7 +417,175 @@ export class Store {
       contextCount: contexts.length,
       sourceCount: new Set(contexts.map((c) => c.sourceId)).size,
       contexts,
+      deletedContexts: allContexts.filter((c) => c.lifecycle === "deleted"),
     };
+  }
+  updateExpression(
+    id: string,
+    input: unknown,
+    version: number,
+    lifecycle?: string,
+  ) {
+    return this.transaction(() => {
+      const old = this.expression(id);
+      this.checkVersion(old.version, version);
+      if (old.lifecycle === "deleted")
+        throw new AppError("请从回收站恢复表达后编辑");
+      const d = expressionSchema.parse(input);
+      if (lifecycle && !["active", "archived"].includes(lifecycle))
+        throw new AppError("表达状态无效");
+      this.db
+        .prepare(
+          "UPDATE expressions SET term=?,normalized_term=?,meaning=?,type=?,priority=?,alternative=?,lifecycle=?,version=version+1,updated_at=? WHERE id=?",
+        )
+        .run(
+          d.term,
+          normalize(d.term),
+          d.meaning,
+          d.type,
+          d.priority,
+          d.alternative,
+          lifecycle ?? old.lifecycle,
+          now(),
+          id,
+        );
+      return this.expression(id);
+    });
+  }
+  deleteExpression(id: string, version: number) {
+    return this.transaction(() => {
+      const old = this.expression(id);
+      this.checkVersion(old.version, version);
+      if (old.lifecycle === "deleted") throw new AppError("表达已在回收站");
+      this.db
+        .prepare(
+          "UPDATE expressions SET restore_lifecycle=lifecycle,lifecycle='deleted',version=version+1,updated_at=? WHERE id=?",
+        )
+        .run(now(), id);
+      this.db
+        .prepare(
+          "UPDATE contexts SET lifecycle='deleted',deleted_by=?,version=version+1,updated_at=? WHERE expression_id=? AND lifecycle='active'",
+        )
+        .run(id, now(), id);
+      return { ok: true };
+    });
+  }
+  restoreExpression(id: string, version: number) {
+    return this.transaction(() => {
+      const old = this.expression(id);
+      this.checkVersion(old.version, version);
+      if (old.lifecycle !== "deleted") throw new AppError("表达不在回收站");
+      this.db
+        .prepare(
+          "UPDATE expressions SET lifecycle=restore_lifecycle,version=version+1,updated_at=? WHERE id=?",
+        )
+        .run(now(), id);
+      this.db
+        .prepare(
+          "UPDATE contexts SET lifecycle='active',deleted_by=NULL,version=version+1,updated_at=? WHERE expression_id=? AND deleted_by=?",
+        )
+        .run(now(), id, id);
+      return this.expression(id);
+    });
+  }
+  trash() {
+    return this.all(
+      "SELECT id FROM expressions WHERE lifecycle='deleted' ORDER BY updated_at DESC",
+    ).map((r) => this.expression(String(r.id)));
+  }
+  context(id: string) {
+    const row = this.one("SELECT expression_id FROM contexts WHERE id=?", id);
+    if (!row) throw new AppError("语境不存在", 404);
+    const e = this.expression(String(row.expression_id));
+    return [...e.contexts, ...e.deletedContexts].find((c) => c.id === id)!;
+  }
+  updateContext(
+    id: string,
+    input: unknown,
+    version: number,
+    targetId: string,
+    allowDuplicate = false,
+  ) {
+    return this.transaction(() => {
+      const old = this.context(id);
+      this.checkVersion(old.version, version);
+      if (
+        old.lifecycle !== "active" ||
+        this.expression(old.expressionId).lifecycle === "deleted"
+      )
+        throw new AppError("请先恢复表达和语境");
+      const target = this.expression(targetId);
+      if (target.lifecycle === "deleted") throw new AppError("目标表达已删除");
+      const raw = draftSchema.parse(input);
+      const source = this.getSource(raw.sourceId);
+      if (source.lifecycle !== "active" && source.id !== old.sourceId)
+        throw new AppError("新增归属前请先恢复来源");
+      let d: DraftInput;
+      try {
+        d = validateContext(
+          { ...raw, importMetadata: old.data.importMetadata },
+          source,
+        );
+      } catch (e) {
+        throw new AppError((e as Error).message);
+      }
+      const fingerprint = this.fingerprint(d);
+      if (
+        !allowDuplicate &&
+        this.one(
+          "SELECT id FROM contexts WHERE id!=? AND expression_id=? AND fingerprint=? AND lifecycle='active'",
+          id,
+          targetId,
+          fingerprint,
+        )
+      )
+        throw new AppError(
+          "目标表达中已有相同事件，请确认是另一次记录",
+          409,
+          "DUPLICATE_CONTEXT",
+        );
+      this.db
+        .prepare(
+          "UPDATE contexts SET expression_id=?,source_id=?,event_kind=?,data=?,fingerprint=?,version=version+1,updated_at=? WHERE id=?",
+        )
+        .run(
+          targetId,
+          d.sourceId,
+          d.eventKind,
+          JSON.stringify(d),
+          fingerprint,
+          now(),
+          id,
+        );
+      for (const eid of new Set([old.expressionId, targetId]))
+        this.db
+          .prepare(
+            "UPDATE expressions SET version=version+1,updated_at=? WHERE id=?",
+          )
+          .run(now(), eid);
+      return this.context(id);
+    });
+  }
+  setContextDeleted(id: string, version: number, deleted: boolean) {
+    return this.transaction(() => {
+      const old = this.context(id);
+      this.checkVersion(old.version, version);
+      if (this.expression(old.expressionId).lifecycle === "deleted")
+        throw new AppError("请先恢复表达");
+      if (old.lifecycle !== (deleted ? "active" : "deleted"))
+        throw new AppError("语境状态已变化，请刷新");
+      this.db
+        .prepare(
+          "UPDATE contexts SET lifecycle=?,deleted_by=NULL,version=version+1,updated_at=? WHERE id=?",
+        )
+        .run(deleted ? "deleted" : "active", now(), id);
+      this.db
+        .prepare(
+          "UPDATE expressions SET version=version+1,updated_at=? WHERE id=?",
+        )
+        .run(now(), old.expressionId);
+      return this.context(id);
+    });
   }
   candidates(term: string) {
     return this.all(

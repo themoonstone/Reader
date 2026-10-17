@@ -1,5 +1,13 @@
 import { z } from "zod";
 import { AppError, getStore, type Store } from "./store";
+import {
+  exportBackup,
+  previewRestore,
+  commitRestore,
+  snapshots,
+  readSnapshot,
+  MAX_BACKUP,
+} from "./backup";
 import { previewExcel, commitExcel } from "./excel-import";
 
 export async function handle(
@@ -7,7 +15,7 @@ export async function handle(
   segments: string[],
   store?: Store,
 ): Promise<Response> {
-  const headers = { "Cache-Control": "no-store" };
+  const headers: Record<string, string> = { "Cache-Control": "no-store" };
   try {
     const url = new URL(request.url);
     if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname))
@@ -28,10 +36,20 @@ export async function handle(
         throw new AppError("请使用 JSON 请求", 415);
     }
     const db = store ?? getStore();
+    headers["X-ReadWords-Generation"] = db.generation;
     const [resource, id, action] = segments;
+    if (segments.length > 3) throw new AppError("接口不存在", 404);
     if (request.method === "GET") {
       let data;
-      if (resource === "sources" && !id) data = db.sources();
+      if (resource === "backup" && id === "status")
+        data = {
+          generation: db.generation,
+          snapshots: snapshots(db),
+          snapshotDir: db.snapshotDir,
+          schemaVersion: 2,
+        };
+      else if (resource === "trash") data = db.trash();
+      else if (resource === "sources" && !id) data = db.sources();
       else if (resource === "drafts") data = id ? db.getDraft(id) : db.drafts();
       else if (resource === "candidates")
         data = db.candidates(url.searchParams.get("term") || "");
@@ -48,7 +66,12 @@ export async function handle(
       else throw new AppError("接口不存在", 404);
       return Response.json(data, { headers });
     }
-    const limit = resource === "imports" ? 8 * 1024 * 1024 : 128 * 1024;
+    const limit =
+      resource === "backup" && id === "preview"
+        ? MAX_BACKUP
+        : resource === "imports"
+          ? 8 * 1024 * 1024
+          : 128 * 1024;
     const reader = request.body?.getReader();
     let size = 0;
     const chunks: Uint8Array[] = [];
@@ -72,8 +95,78 @@ export async function handle(
       throw new AppError("JSON 格式无效");
     }
     const body = z.record(z.string(), z.unknown()).parse(parsed);
+    if (request.headers.get("X-ReadWords-Generation") !== db.generation)
+      throw new AppError(
+        "学习库已替换或页面版本过旧。请复制输入并刷新页面后重试。",
+        409,
+        "WORKSPACE_CHANGED",
+      );
     let data;
-    if (
+    if (resource === "backup" && request.method === "POST") {
+      if (id === "export") {
+        data = exportBackup(db);
+        if (Buffer.byteLength(JSON.stringify(data)) > MAX_BACKUP)
+          throw new AppError(
+            "学习库超过当前 50 MB JSON 恢复限制。请保留数据库并联系维护者，勿依赖无法恢复的导出。",
+            413,
+          );
+      } else if (id === "preview") data = previewRestore(db, body);
+      else if (id === "restore")
+        data = commitRestore(
+          db,
+          z.uuid().parse(body.token),
+          z.literal(true).parse(body.confirmed),
+        );
+      else if (id === "snapshot")
+        data = readSnapshot(db, z.string().parse(body.name));
+      else throw new AppError("接口不存在", 404);
+    } else if (resource === "expressions" && id && request.method === "PATCH")
+      data = db.updateExpression(
+        id,
+        body.data,
+        z.number().int().positive().parse(body.version),
+        z.enum(["active", "archived"]).optional().parse(body.lifecycle),
+      );
+    else if (
+      resource === "expressions" &&
+      id &&
+      request.method === "POST" &&
+      action === "delete"
+    )
+      data = db.deleteExpression(
+        id,
+        z.number().int().positive().parse(body.version),
+      );
+    else if (
+      resource === "expressions" &&
+      id &&
+      request.method === "POST" &&
+      action === "restore"
+    )
+      data = db.restoreExpression(
+        id,
+        z.number().int().positive().parse(body.version),
+      );
+    else if (resource === "contexts" && id && request.method === "PATCH")
+      data = db.updateContext(
+        id,
+        body.data,
+        z.number().int().positive().parse(body.version),
+        z.uuid().parse(body.expressionId),
+        z.boolean().optional().parse(body.allowDuplicate),
+      );
+    else if (
+      resource === "contexts" &&
+      id &&
+      request.method === "POST" &&
+      ["delete", "restore"].includes(action)
+    )
+      data = db.setContextDeleted(
+        id,
+        z.number().int().positive().parse(body.version),
+        action === "delete",
+      );
+    else if (
       resource === "imports" &&
       id === "preview" &&
       request.method === "POST"

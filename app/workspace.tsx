@@ -11,6 +11,8 @@ import {
 } from "@/lib/contracts";
 import { Capture, Empty, ErrorBox, Modal, SourceForm } from "./components";
 import DraftEditor from "./draft-editor";
+import Maintenance, { Trash } from "./maintenance";
+import BackupSettings from "./backup-settings";
 import ExcelImporter from "./excel-importer";
 
 const symbols: Record<string, string> = {
@@ -615,6 +617,25 @@ export default function Workspace() {
                       ＋ 再次记录
                     </button>
                   </div>
+                  {detail.lifecycle !== "deleted" ? (
+                    <Maintenance
+                      expression={detail}
+                      sources={sources}
+                      onDirty={onDirty}
+                      onDone={(id) => {
+                        setNotice("已保存维护操作。");
+                        refresh();
+                        navigate(id ? `expression/${id}` : "search");
+                      }}
+                    />
+                  ) : (
+                    <section className="panel">
+                      <p>此表达已在回收站，请到设置恢复。</p>
+                      <button onClick={() => navigate("settings")}>
+                        打开回收站
+                      </button>
+                    </section>
+                  )}
                   <div className="stats-row">
                     {[
                       ["Seen · 遇见", detail.seen],
@@ -782,15 +803,19 @@ export default function Workspace() {
                     <p>
                       停止服务后数据仍保留。当前无账号、云端同步或自动外部请求。
                     </p>
-                    <p>
-                      本阶段尚未提供 JSON 备份恢复；它属于 R0
-                      后续交付内容。服务停止后可复制整个 data
-                      文件夹作临时人工备份。
-                    </p>
+
                     <p className="muted">
                       当前阶段：Source → 手动采集 → Inbox → 保存 → 搜索详情。
                     </p>
                   </section>
+                  <BackupSettings />
+                  <Trash
+                    key={revision}
+                    onDone={(id) => {
+                      refresh();
+                      navigate(`expression/${id}`);
+                    }}
+                  />
                 </>
               )}
             </>

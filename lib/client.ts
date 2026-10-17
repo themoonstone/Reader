@@ -6,16 +6,22 @@ export class RequestError extends Error {
     super(message);
   }
 }
+const clientState = globalThis as unknown as { readwordsGeneration?: string };
+let generation: string | null = clientState.readwordsGeneration ?? null;
 export async function api<T>(
   path: string,
   method = "GET",
   body?: unknown,
 ): Promise<T> {
+  if (method !== "GET" && !generation) await api("backup/status");
   let response: Response;
   try {
     response = await fetch(`/api/${path}`, {
       method,
-      headers: body ? { "Content-Type": "application/json" } : undefined,
+      headers: {
+        ...(body ? { "Content-Type": "application/json" } : {}),
+        ...(generation ? { "X-ReadWords-Generation": generation } : {}),
+      },
       body: body ? JSON.stringify(body) : undefined,
       cache: "no-store",
     });
@@ -25,6 +31,16 @@ export async function api<T>(
       "OFFLINE",
     );
   }
+  const nextGeneration = response.headers.get("X-ReadWords-Generation");
+  if (!generation) {
+    generation = nextGeneration;
+    if (nextGeneration) clientState.readwordsGeneration = nextGeneration;
+  }
+  if (generation && nextGeneration && generation !== nextGeneration)
+    throw new RequestError(
+      "学习库已替换，请复制输入并刷新页面。",
+      "WORKSPACE_CHANGED",
+    );
   const data = await response.json();
   if (!response.ok)
     throw new RequestError(

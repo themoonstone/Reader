@@ -136,6 +136,9 @@ export type Draft = {
   expressionId: string | null;
 };
 export type Context = {
+  expressionId: string;
+  version: number;
+  lifecycle: string;
   id: string;
   sourceId: string;
   sourceTitle: string;
@@ -144,6 +147,7 @@ export type Context = {
   createdAt: string;
 };
 export type Expression = {
+  version: number;
   id: string;
   term: string;
   meaning: string;
@@ -158,6 +162,7 @@ export type Expression = {
   contextCount: number;
   sourceCount: number;
   contexts: Context[];
+  deletedContexts: Context[];
   matches?: string[];
 };
 export function normalize(s: string) {
@@ -199,4 +204,55 @@ export function emptyDraft(
     }),
     term: "",
   };
+}
+
+export const expressionSchema = z.object({
+  term: text(200).min(1),
+  meaning: text(1000).min(1),
+  type: z.enum(["word", "phrase", "collocation", "chunk", "sentence_pattern"]),
+  priority: z.enum(["P1", "P2", "P3"]),
+  alternative: text(1000),
+});
+/** Shared save/edit/restore validation. Never invent source content. */
+export function validateContext(
+  input: unknown,
+  source: SourceInput,
+): DraftInput {
+  const d = draftSchema.parse(input);
+  if (d.sourceId !== source.id || d.sourceType !== source.type)
+    throw new Error("来源类型不匹配");
+  if (!d.meaning) throw new Error("请填写语境释义");
+  if (d.whySaved === "other" && !d.note)
+    throw new Error("选择其他原因时请填写备注");
+  if (d.occurredOn && !validDate(d.occurredOn)) throw new Error("接触日期无效");
+  if (d.whySaved === "misheard" && d.sourceType !== "Listening")
+    throw new Error("误听原因仅用于 Listening");
+  if (
+    ["Reading", "Listening"].includes(d.sourceType) &&
+    d.eventKind !== "exposure"
+  )
+    throw new Error("阅读/听力事件应为遇见");
+  if (d.sourceType === "Writing" && d.eventKind === "exposure")
+    throw new Error("请选择写作事件类型");
+  if (
+    d.eventKind === "output_corrected" &&
+    (d.sourceType !== "Writing" ||
+      !d.originalExpression ||
+      !d.correctedExpression ||
+      d.originalExpression === d.correctedExpression)
+  )
+    throw new Error("写作纠正需填写不同的原表达和改进表达");
+  if (d.sourceType === "Listening") {
+    d.timestampSeconds = parseTimestamp(d.timestamp);
+    if (
+      d.timestampSeconds !== null &&
+      source.duration !== "" &&
+      d.timestampSeconds > source.duration
+    )
+      throw new Error("时间位置超过材料时长");
+  } else {
+    if (d.timestamp) throw new Error("时间位置仅适用于 Listening");
+    d.timestampSeconds = null;
+  }
+  return d;
 }

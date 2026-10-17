@@ -277,6 +277,7 @@ test("API rejects cross-site, missing origin, remote hosts, malformed JSON and n
         headers: {
           ...(origin ? { Origin: origin } : {}),
           "Content-Type": type,
+          "X-ReadWords-Generation": store.generation,
         },
         body,
       });
@@ -330,6 +331,7 @@ test("API rejects cross-site, missing origin, remote hosts, malformed JSON and n
       headers: {
         Host: "127.0.0.1:3000",
         Origin: "http://127.0.0.1:3000",
+        "X-ReadWords-Generation": store.generation,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

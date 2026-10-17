@@ -1578,3 +1578,64 @@ dialog .type-tabs button {
     padding: 12px 10px;
   }
 }
+
+.wrap {
+  flex-wrap: wrap;
+}
+.maintenance {
+  margin-bottom: 24px;
+}
+.maintenance-row {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border, #ddd);
+  padding: 12px 0;
+}
+.maintenance-row > span,
+.maintenance-row > code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.maintenance-row .actions {
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.danger {
+  color: #9a3128;
+}
+.restore-preview table {
+  width: 100%;
+  margin: 16px 0;
+  text-align: left;
+}
+.settings-panel code {
+  overflow-wrap: anywhere;
+}
+.settings-panel hr {
+  border: 0;
+  border-top: 1px solid #ddd;
+  margin: 24px 0;
+}
+.restore-preview {
+  padding: 16px;
+  background: #f7f4ed;
+  margin: 16px 0;
+}
+@media (max-width: 700px) {
+  .maintenance-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+.restore-preview > button.danger {
+  background: #9a3128;
+  color: #fff;
+  margin-top: 16px;
+}
+.settings-panel + .settings-panel,
+.settings-panel + .panel {
+  margin-top: 24px;
+}

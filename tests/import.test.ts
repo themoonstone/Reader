@@ -1,3 +1,4 @@
+import { exportBackup, validateBackup } from "../lib/backup";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
@@ -244,6 +245,23 @@ test(
       assert.equal(store.search("", "", "P2").length, 0);
       assert.equal(store.search("", "", "P3").length, 0);
       assert.equal(store.all("SELECT * FROM contexts").length, 120);
+      const e = store.search()[0],
+        c = e.contexts[0];
+      const metadata = c.data.importMetadata;
+      store.updateContext(
+        c.id,
+        {
+          ...c.data,
+          sentence: "User corrected the excerpt.",
+          importMetadata: undefined,
+        },
+        c.version,
+        e.id,
+      );
+      assert.deepEqual(store.context(c.id).data.importMetadata, metadata);
+      const backup = exportBackup(store);
+      assert.equal(validateBackup(backup).contexts.length, 120);
+      assert(backup.contexts.every((row) => row.data.importMetadata));
     } finally {
       store.close();
     }
