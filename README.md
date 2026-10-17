@@ -4,7 +4,9 @@ Mac 本地个人英语语料库。当前实现范围为首个闭环及 Excel 严
 
 第一次使用请看 [中文使用指南](documents/USER_GUIDE.md)，或启动后打开 [网站内使用指南](http://127.0.0.1:3000/guide)。本 README 主要用于开发、启动及验收。
 
-功能现状见 [Feature List](documents/FEATURE_LIST.md)；后续计划见 [云端与多设备升级方案](documents/07-云端与多设备升级方案.md)。[PRD v0.5](documents/02-产品需求文档.md) 包含已确认本地基线与尚未实现的 C 阶段，不代表当前已上云。
+功能现状见 [Feature List](documents/FEATURE_LIST.md)；后续计划见 [云端与多设备升级方案](documents/07-云端与多设备升级方案.md)。[PRD v0.6](documents/02-产品需求文档.md) 包含已确认本地基线与尚未实现的 C 阶段，不代表当前已上云。
+
+Review 后续开发见 [低压力复习需求与技术设计](documents/11-低压力Review需求与技术设计.md) 和 [开发/验收计划](documents/12-Review开发计划与验收清单.md)：手动选择复习池，限时限量，无补课欠账。当前仅有文档，Review 仍未实现。
 
 ## 启动
 
