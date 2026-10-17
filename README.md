@@ -4,9 +4,9 @@ Mac 本地个人英语语料库。当前实现范围为首个闭环及 Excel 严
 
 第一次使用请看 [中文使用指南](documents/USER_GUIDE.md)，或启动后打开 [网站内使用指南](http://127.0.0.1:3000/guide)。本 README 主要用于开发、启动及验收。
 
-功能现状见 [Feature List](documents/FEATURE_LIST.md)；后续计划见 [云端与多设备升级方案](documents/07-云端与多设备升级方案.md)。[PRD v0.6](documents/02-产品需求文档.md) 包含已确认本地基线与尚未实现的 C 阶段，不代表当前已上云。
+功能现状见 [Feature List](documents/FEATURE_LIST.md)；后续计划见 [云端与多设备升级方案](documents/07-云端与多设备升级方案.md)。[PRD v0.7](documents/02-产品需求文档.md) 包含已确认本地基线与尚未实现的 C 阶段，不代表当前已上云。
 
-Review 后续开发见 [低压力复习需求与技术设计](documents/11-低压力Review需求与技术设计.md) 和 [开发/验收计划](documents/12-Review开发计划与验收清单.md)：手动选择复习池，限时限量，无补课欠账。当前仅有文档，Review 仍未实现。
+Review 需求见 [低压力复习需求与技术设计](documents/11-低压力Review需求与技术设计.md) 和 [开发/验收计划](documents/12-Review开发计划与验收清单.md)：手动选择复习池，限时限量，无补课欠账。当前 RV-A 认义功能已实现，完整 Mac 验收待补，RV-B 未开始。实施证据见 [Review 自检记录](documents/13-Review实现与自检记录.md)。
 
 ## 启动
 
@@ -35,9 +35,9 @@ npm start
 
 可在 `.env.local` 设置 `READWORDS_DB_PATH=/绝对路径/readwords.sqlite`，然后重启服务；这会切换数据库位置，**不会自动搬迁原有数据**。
 
-左下“本地工作空间”→“备份与恢复”可下载全库 JSON（schema 2，上限 50 MB），恢复时先校验和预览、生成当前库快照，再确认整库替换。恢复后旧窗口须复制输入并刷新。快照按数据库文件名隔离，默认在 `data/snapshots/readwords.sqlite/`，与数据库同机，不代替异地备份；尚无定时备份。详见 [备份与维护说明](documents/09-备份恢复与数据维护.md)。
+左下“本地工作空间”→“备份与恢复”可下载全库 JSON（schema 3，兼容有效 schema 2，上限 50 MB），恢复时先校验和预览、生成当前库快照，再确认整库替换。恢复后旧窗口须复制输入并刷新。快照按数据库文件名隔离，默认在 `data/snapshots/readwords.sqlite/`，与数据库同机，不代替异地备份；尚无定时备份。详见 [备份与维护说明](documents/09-备份恢复与数据维护.md)。
 
-首次打开原 schema v1 数据库会先生成 `before-schema-v2-*.sqlite` 一致性快照，再事务升级到 v2。不要在运行中手动替换数据库；应急回退步骤见上述说明。
+首次打开原 schema v1/v2 数据库会在相应升级前生成 `before-schema-v2-*.sqlite` / `before-schema-v3-*.sqlite` 一致性快照，再事务升级到当前 v3。旧 schema 2 JSON 恢复会清除复习进度，须检查预览警告。不要在运行中手动替换数据库；应急回退步骤见上述说明。
 
 ## 5 分钟验收
 
@@ -78,7 +78,7 @@ E2E 使用本机已安装的 Google Chrome、独立 3100 端口和系统临时�
 ## 当前边界
 
 - 已有：Excel 严格 P1 导入、四类来源、来源编辑/归档、表达编辑/归档/回收站、语境编辑/归属调整/删除恢复、JSON 备份恢复、手动采集、Inbox 自动保存/忽略恢复、义项候选与重复事件确认、原子入库、搜索筛选和多语境详情。
-- 后续 R0：Review、真实 AI、来源删除、容量性能及完整 Mac 验收。
+- 后续 R0：Review 完整验收与 RV-B、真实 AI、来源删除、容量性能及完整 Mac 验收。
 - 后续 R1：OCR、PWA、CSV、统计。
 - 无登录、云端同步或后台外部调用。安装依赖后，本地核心流程运行无需外网。
 

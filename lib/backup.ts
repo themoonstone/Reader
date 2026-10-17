@@ -20,6 +20,14 @@ import {
   validateContext,
 } from "./contracts";
 
+import {
+  reviewEntrySchema,
+  reviewSessionSchema,
+  reviewCardSchema,
+  reviewRecordSchema,
+  reviewInterval,
+} from "./review-contracts";
+import { reviewTables, recognitionSentence } from "./review-storage";
 const stamp = z.iso.datetime();
 const id = z.uuid();
 const version = z
@@ -78,7 +86,7 @@ const draft = z
     updated_at: stamp,
   })
   .strict();
-export const backupSchema = z
+const legacyBackupSchema = z
   .object({
     format: z.literal("readwords-backup"),
     schema_version: z.literal(2),
@@ -89,9 +97,24 @@ export const backupSchema = z
     drafts: z.array(draft).max(500000),
   })
   .strict();
+export const backupSchema = legacyBackupSchema
+  .extend({
+    schema_version: z.literal(3),
+    review_entries: z.array(reviewEntrySchema).max(100000),
+    review_sessions: z.array(reviewSessionSchema).max(500000),
+    review_cards: z.array(reviewCardSchema).max(500000),
+    review_records: z.array(reviewRecordSchema).max(500000),
+  })
+  .strict();
 export type Backup = z.infer<typeof backupSchema>;
 export const MAX_BACKUP = 50 * 1024 * 1024;
-const tables = ["sources", "expressions", "contexts", "drafts"] as const;
+const tables = [
+  "sources",
+  "expressions",
+  "contexts",
+  "drafts",
+  ...reviewTables,
+] as const;
 export function exportBackup(store: Store): Backup {
   return store.transaction(() => {
     const rows = Object.fromEntries(
@@ -100,13 +123,20 @@ export function exportBackup(store: Store): Backup {
         store
           .all(`SELECT * FROM ${table} ORDER BY id`)
           .map((row) =>
-            row.data ? { ...row, data: JSON.parse(String(row.data)) } : row,
+            Object.fromEntries(
+              Object.entries(row).map(([k, v]) => [
+                k,
+                ["data", "snapshot", "policy"].includes(k)
+                  ? JSON.parse(String(v))
+                  : v,
+              ]),
+            ),
           ),
       ]),
     );
     return backupSchema.parse({
       format: "readwords-backup",
-      schema_version: 2,
+      schema_version: 3,
       exported_at: new Date().toISOString(),
       ...rows,
     });
@@ -116,7 +146,19 @@ function invalid(message: string): never {
   throw new AppError(`备份无效：${message}`);
 }
 export function validateBackup(input: unknown): Backup {
-  const b = backupSchema.parse(input);
+  const parsed = z.union([backupSchema, legacyBackupSchema]).parse(input);
+  const b = backupSchema.parse(
+    parsed.schema_version === 2
+      ? {
+          ...parsed,
+          schema_version: 3,
+          review_entries: [],
+          review_sessions: [],
+          review_cards: [],
+          review_records: [],
+        }
+      : parsed,
+  );
   const indexed = <T extends { id: string }>(rows: T[]) => {
     const m = new Map(rows.map((r) => [r.id, r]));
     if (m.size !== rows.length) invalid("重复 ID");
@@ -193,7 +235,167 @@ export function validateBackup(input: unknown): Backup {
     } else if (d.expression_id !== null || d.context_id !== null)
       invalid("待处理草稿含入库结果");
   }
+  validateReview(b);
   return b;
+}
+function validateReview(b: Backup) {
+  const map = <T extends { id: string }>(rows: T[]) => {
+    const m = new Map(rows.map((r) => [r.id, r]));
+    if (m.size !== rows.length) invalid("复习 ID 重复");
+    return m;
+  };
+  const entries = map(b.review_entries),
+    sessions = map(b.review_sessions),
+    cards = map(b.review_cards);
+  map(b.review_records);
+  const es = map(b.expressions),
+    cs = map(b.contexts);
+  const unique = (values: string[]) => {
+    if (new Set(values).size !== values.length) invalid("复习唯一键重复");
+  };
+  unique(b.review_entries.map((e) => e.expression_id));
+  unique(b.review_sessions.map((s) => s.start_request_id));
+  unique(b.review_cards.map((c) => c.issue_request_id));
+  unique(b.review_cards.map((c) => c.session_id + ":" + c.expression_id));
+  unique(b.review_records.map((r) => r.card_id));
+  if (
+    b.review_entries.filter((e) => e.state === "active").length > 20 ||
+    b.review_sessions.filter((s) => s.state !== "ended").length > 1
+  )
+    invalid("复习容量或未结束会话超限");
+  for (const e of entries.values()) {
+    const x = es.get(e.expression_id);
+    if (!x) invalid("复习表达引用丢失");
+    if (e.updated_at < e.created_at) invalid("复习池时间无效");
+    if (
+      Boolean(e.first_presented_at) !== Boolean(e.first_presented_local_date) ||
+      Boolean(e.first_presented_at) !== Boolean(e.first_presented_timezone) ||
+      Boolean(e.first_presented_at) !== Boolean(e.last_presented_at)
+    )
+      invalid("首次展示字段不一致");
+    if (
+      e.state === "active" &&
+      (x.lifecycle !== "active" ||
+        !["P1", "P2"].includes(x.priority) ||
+        !x.meaning ||
+        !b.contexts.some(
+          (c) =>
+            c.expression_id === x.id &&
+            c.lifecycle === "active" &&
+            c.data.meaning &&
+            recognitionSentence(c.data),
+        ))
+    )
+      invalid("活跃复习池材料无效");
+  }
+  const dates = new Map<string, number>();
+  for (const c of cards.values()) {
+    const e = entries.get(c.entry_id),
+      s = sessions.get(c.session_id);
+    if (
+      !e ||
+      !s ||
+      e.expression_id !== c.expression_id ||
+      !es.has(c.expression_id) ||
+      !cs.has(c.context_id)
+    )
+      invalid("复习卡片引用无效");
+    if (
+      c.created_at < s.started_at ||
+      (c.revealed_at && c.revealed_at < c.created_at)
+    )
+      invalid("卡片时间无效");
+    try {
+      const date = new Intl.DateTimeFormat("en-CA", {
+        timeZone: c.presented_timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date(c.created_at));
+      if (date !== c.presented_local_date) invalid("展示日期与时区/时间不一致");
+    } catch {
+      invalid("展示日期或时区无效");
+    }
+    if (["revealed", "answered"].includes(c.state) && !c.revealed_at)
+      invalid("缺少揭晓时间");
+    if (c.is_first_presentation) {
+      dates.set(
+        c.presented_local_date,
+        (dates.get(c.presented_local_date) || 0) + 1,
+      );
+      if (
+        e.first_presented_at !== c.created_at ||
+        e.first_presented_local_date !== c.presented_local_date ||
+        e.first_presented_timezone !== c.presented_timezone
+      )
+        invalid("首次展示不一致");
+    }
+  }
+  if ([...dates.values()].some((n) => n > 5)) invalid("当日首次引入超限");
+  for (const e of entries.values())
+    if (
+      b.review_cards.filter(
+        (c) => c.entry_id === e.id && c.is_first_presentation,
+      ).length !== Number(Boolean(e.first_presented_at))
+    )
+      invalid("首次引入卡不一致");
+  for (const s of sessions.values()) {
+    const rows = b.review_cards.filter((c) => c.session_id === s.id);
+    if (
+      s.issued_count !== rows.length ||
+      s.issued_count > s.card_limit ||
+      s.introduced_count !==
+        rows.filter((c) => c.is_first_presentation).length ||
+      s.introduced_count > s.new_limit ||
+      s.active_elapsed_ms > s.budget_seconds * 1000
+    )
+      invalid("会话计数无效");
+    if (
+      (s.state === "ended") !== Boolean(s.ended_at) ||
+      (s.state === "ended") !== Boolean(s.end_reason) ||
+      s.last_checkpoint_at < s.started_at ||
+      (s.ended_at && s.ended_at < s.started_at)
+    )
+      invalid("会话结束状态无效");
+    if (s.current_card_id && cards.get(s.current_card_id)?.session_id !== s.id)
+      invalid("当前卡引用无效");
+    if (
+      rows.length > 0 !== Boolean(s.current_card_id) ||
+      rows
+        .filter((c) => ["shown", "revealed"].includes(c.state))
+        .some((c) => c.id !== s.current_card_id)
+    )
+      invalid("当前卡状态无效");
+  }
+  const recorded = new Set<string>();
+  for (const r of b.review_records) {
+    const c = cards.get(r.card_id);
+    if (
+      !c ||
+      c.state !== "answered" ||
+      c.session_id !== r.session_id ||
+      c.entry_id !== r.entry_id ||
+      c.expression_id !== r.original_expression_id ||
+      c.context_id !== r.context_id ||
+      JSON.stringify(c.snapshot) !== JSON.stringify(r.snapshot) ||
+      r.reviewed_at < (c.revealed_at || c.created_at)
+    )
+      invalid("反馈引用或快照无效");
+    const next = reviewInterval(
+      r.old_stage,
+      r.result,
+      Date.parse(r.reviewed_at),
+    );
+    if (
+      next.stage !== r.new_stage ||
+      next.eligibleAfter !== r.new_eligible_after
+    )
+      invalid("反馈间隔无效");
+    recorded.add(c.id);
+  }
+  for (const c of cards.values())
+    if ((c.state === "answered") !== recorded.has(c.id))
+      invalid("卡片与反馈不一致");
 }
 export function counts(b: Backup) {
   return {
@@ -201,6 +403,10 @@ export function counts(b: Backup) {
     expressions: b.expressions.length,
     contexts: b.contexts.length,
     drafts: b.drafts.length,
+    review_entries: b.review_entries.length,
+    review_sessions: b.review_sessions.length,
+    review_cards: b.review_cards.length,
+    review_records: b.review_records.length,
   };
 }
 function digest(b: Backup) {
@@ -270,6 +476,10 @@ export function previewRestore(store: Store, input: unknown) {
     });
     return {
       token,
+      warning:
+        (input as { schema_version?: number })?.schema_version === 2
+          ? "这是 schema 2 旧备份，不含复习数据；确认替换会清除当前全部复习池、会话和反馈进度。"
+          : "",
       incoming: counts(b),
       current: counts(current),
       snapshot: name,
@@ -292,12 +502,17 @@ export function commitRestore(store: Store, token: string, confirmed: boolean) {
     if (digest(readSnapshot(store, p.snapshot)) !== p.digest)
       throw new AppError("恢复前快照已变化，请重新预览", 409);
     store.db.exec(
-      "DELETE FROM drafts; DELETE FROM contexts; DELETE FROM expressions; DELETE FROM sources;",
+      "DELETE FROM review_leases; DELETE FROM review_records; DELETE FROM review_cards; DELETE FROM review_sessions; DELETE FROM review_entries; DELETE FROM drafts; DELETE FROM contexts; DELETE FROM expressions; DELETE FROM sources;",
     );
     for (const table of tables)
       for (const row of p.data[table]) {
         const record: Record<string, unknown> = { ...row };
-        if ("data" in record) record.data = JSON.stringify(record.data);
+        for (const key of ["data", "snapshot", "policy"])
+          if (key in record) record[key] = JSON.stringify(record[key]);
+        if (table === "review_sessions" && record.state === "running") {
+          record.state = "paused";
+          record.version = Number(record.version) + 1;
+        }
         const keys = Object.keys(record);
         store.db
           .prepare(

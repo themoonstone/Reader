@@ -1,3 +1,8 @@
+import {
+  createReviewTables,
+  restartReview,
+  reconcileReview,
+} from "./review-storage";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, chmodSync, openSync, fsyncSync, closeSync } from "node:fs";
@@ -30,7 +35,11 @@ export class Store {
   db: DatabaseSync;
   private transactionDepth = 0;
   readonly snapshotDir: string;
-  constructor(readonly path: string) {
+  private reviewReady = false;
+  constructor(
+    readonly path: string,
+    readonly clock: () => number = Date.now,
+  ) {
     this.snapshotDir =
       path === ":memory:"
         ? resolve("/tmp/readwords-memory-snapshots", randomUUID())
@@ -45,7 +54,7 @@ export class Store {
       const version = Number(
         (this.db.prepare("PRAGMA user_version").get() as Row).user_version,
       );
-      if (version > 2)
+      if (version > 3)
         throw new AppError("数据库版本高于当前程序，请使用更新版本", 500);
       if (version === 0)
         this.transaction(() =>
@@ -99,9 +108,34 @@ export class Store {
       PRAGMA user_version=2;
     `),
         );
+      if (version < 3) {
+        if (version > 0) this.snapshotUpgrade(3);
+        this.transaction(() => createReviewTables(this.db));
+      }
+      this.reviewReady = true;
+      this.transaction(() =>
+        restartReview(this.db, new Date(this.clock()).toISOString()),
+      );
     } catch (error) {
       this.db.close();
       throw error;
+    }
+  }
+  private snapshotUpgrade(version: number) {
+    mkdirSync(this.snapshotDir, { recursive: true, mode: 0o700 });
+    const path = join(
+      this.snapshotDir,
+      `before-schema-v${version}-${randomUUID()}.sqlite`,
+    );
+    this.db.prepare("VACUUM INTO ?").run(path);
+    chmodSync(path, 0o600);
+    for (const target of [path, this.snapshotDir]) {
+      const fd = openSync(target, "r");
+      try {
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
     }
   }
   get generation() {
@@ -119,6 +153,8 @@ export class Store {
     try {
       this.db.exec(depth === 0 ? "BEGIN IMMEDIATE" : `SAVEPOINT ${savepoint}`);
       const result = fn();
+      if (depth === 0 && this.reviewReady)
+        reconcileReview(this.db, new Date(this.clock()).toISOString());
       this.db.exec(depth === 0 ? "COMMIT" : `RELEASE ${savepoint}`);
       return result;
     } catch (e) {

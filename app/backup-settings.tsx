@@ -7,9 +7,14 @@ type Counts = {
   expressions: number;
   contexts: number;
   drafts: number;
+  review_entries: number;
+  review_sessions: number;
+  review_cards: number;
+  review_records: number;
 };
 type Preview = {
   token: string;
+  warning: string;
   incoming: Counts;
   current: Counts;
   snapshot: string;
@@ -59,8 +64,7 @@ export default function BackupSettings() {
       <h2>备份与恢复</h2>
       <p>
         JSON 包含所有已保存表达、语境、来源、Inbox
-        草稿、归档及回收站记录，可能含私人写作，请妥善保存。当前没有复习/AI
-        记录，不包含密钥。
+        草稿、归档、回收站以及复习池、会话、卡片和反馈，可能含私人写作，请妥善保存。不包含运行租约或密钥。
       </p>
       <ErrorBox error={error} />
       {notice && <p role="status">{notice}</p>}
@@ -116,6 +120,7 @@ export default function BackupSettings() {
       {preview && (
         <div className="restore-preview">
           <h3>恢复预览</h3>
+          {preview.warning && <p role="alert">{preview.warning}</p>}
           <table>
             <thead>
               <tr>
@@ -131,6 +136,10 @@ export default function BackupSettings() {
                   ["expressions", "表达"],
                   ["contexts", "语境（含回收站）"],
                   ["drafts", "草稿（含已入库记录）"],
+                  ["review_entries", "复习池（含暂停/移出）"],
+                  ["review_sessions", "复习会话"],
+                  ["review_cards", "复习卡片"],
+                  ["review_records", "复习反馈"],
                 ] as const
               ).map(([key, label]) => (
                 <tr key={key}>
@@ -207,8 +216,8 @@ export default function BackupSettings() {
         </>
       )}
       <p className="muted">
-        下载快照后，用上方“选择 JSON 备份”预览并恢复。升级 schema v1→v2 前另有
-        SQLite 一致性快照供人工应急；定时自动备份尚未实现。
+        下载快照后，用上方“选择 JSON 备份”预览并恢复。升级 schema v1→v2、v2→v3
+        前另有 SQLite 一致性快照供人工应急；定时自动备份尚未实现。
       </p>
     </section>
   );

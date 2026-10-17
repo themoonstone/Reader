@@ -1639,3 +1639,68 @@ dialog .type-tabs button {
 .settings-panel + .panel {
   margin-top: 24px;
 }
+
+.review-page .panel {
+  margin-bottom: 1.5rem;
+}
+.review-settings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 1rem;
+}
+.review-pool-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--border, #ddd);
+  overflow-wrap: anywhere;
+}
+.review-pool-row p {
+  margin: 0.3rem 0;
+}
+.review-pool-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 1.25rem;
+  height: 1.25rem;
+}
+.review-pool-row > span {
+  flex: 1;
+}
+.review-pool-row .actions {
+  flex-wrap: wrap;
+}
+.review-session blockquote {
+  font-size: 1.3rem;
+  line-height: 1.7;
+  margin: 1.5rem 0;
+  border-left: 3px solid #bdac8c;
+  padding-left: 1.2rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.review-session h2 {
+  font-size: 2rem;
+  overflow-wrap: anywhere;
+}
+.review-answer {
+  background: #f5f1e9;
+  padding: 1.2rem;
+  margin: 1rem 0;
+  border-radius: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.review-session-actions {
+  margin-top: 2rem;
+  flex-wrap: wrap;
+}
+.review-session .section-bar {
+  flex-wrap: wrap;
+}
+@media (max-width: 720px) {
+  .review-pool-row {
+    flex-wrap: wrap;
+  }
+}

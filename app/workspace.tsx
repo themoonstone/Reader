@@ -12,6 +12,7 @@ import {
 import { Capture, Empty, ErrorBox, Modal, SourceForm } from "./components";
 import DraftEditor from "./draft-editor";
 import Maintenance, { Trash } from "./maintenance";
+import ReviewPage, { ReviewDetail } from "./review";
 import BackupSettings from "./backup-settings";
 import ExcelImporter from "./excel-importer";
 
@@ -617,6 +618,7 @@ export default function Workspace() {
                       ＋ 再次记录
                     </button>
                   </div>
+                  <ReviewDetail expression={detail} />
                   {detail.lifecycle !== "deleted" ? (
                     <Maintenance
                       expression={detail}
@@ -806,16 +808,7 @@ export default function Workspace() {
                   </div>
                 </>
               )}
-              {view === "review" && (
-                <Empty title="轻量复习，下一步到来">
-                  <p>
-                    本阶段先把真实表达与语境留下。复习将在后续接入，当前不会产生复习任务。
-                  </p>
-                  <button onClick={() => navigate("library")}>
-                    回到来源库
-                  </button>
-                </Empty>
-              )}
+              {view === "review" && <ReviewPage sources={sources} />}
               {view === "import" && (
                 <ExcelImporter
                   sources={sources}

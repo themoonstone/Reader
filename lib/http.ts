@@ -1,3 +1,4 @@
+import { Review } from "./review";
 import { z } from "zod";
 import { AppError, getStore, type Store } from "./store";
 import {
@@ -37,16 +38,28 @@ export async function handle(
     }
     const db = store ?? getStore();
     headers["X-ReadWords-Generation"] = db.generation;
-    const [resource, id, action] = segments;
-    if (segments.length > 3) throw new AppError("接口不存在", 404);
+    const [resource, id, action, reviewAction] = segments;
+    if (segments.length > (resource === "review" ? 4 : 3))
+      throw new AppError("接口不存在", 404);
     if (request.method === "GET") {
       let data;
-      if (resource === "backup" && id === "status")
+      if (resource === "review" && segments.length === 2) {
+        const review = new Review(db);
+        if (id === "pool") data = review.pool();
+        else if (id === "session") data = review.current();
+        else if (id === "candidates")
+          data = review.candidates(
+            url.searchParams.get("q") || "",
+            Number(url.searchParams.get("page") || 1),
+            url.searchParams.get("sourceId") || "",
+          );
+        else throw new AppError("接口不存在", 404);
+      } else if (resource === "backup" && id === "status")
         data = {
           generation: db.generation,
           snapshots: snapshots(db),
           snapshotDir: db.snapshotDir,
-          schemaVersion: 2,
+          schemaVersion: 3,
         };
       else if (resource === "trash") data = db.trash();
       else if (resource === "sources" && !id) data = db.sources();
@@ -102,7 +115,34 @@ export async function handle(
         "WORKSPACE_CHANGED",
       );
     let data;
-    if (resource === "backup" && request.method === "POST") {
+    if (resource === "review") {
+      const review = new Review(db),
+        post = request.method === "POST";
+      if (id === "pool" && post && !action) data = review.add(body);
+      else if (
+        id === "pool" &&
+        action &&
+        segments.length === 3 &&
+        request.method === "PATCH"
+      )
+        data = review.updatePool(z.uuid().parse(action), body);
+      else if (id === "sessions" && post && !action) data = review.start(body);
+      else if (id === "sessions" && post && action && reviewAction) {
+        const sid = z.uuid().parse(action);
+        if (reviewAction === "lease") data = review.claim(sid, body);
+        else if (reviewAction === "heartbeat")
+          data = review.heartbeat(sid, body);
+        else if (reviewAction === "next") data = review.next(sid, body);
+        else if (reviewAction === "state") data = review.state(sid, body);
+        else throw new AppError("接口不存在", 404);
+      } else if (id === "cards" && post && action && reviewAction) {
+        const cid = z.uuid().parse(action);
+        if (reviewAction === "reveal") data = review.reveal(cid, body);
+        else if (reviewAction === "feedback") data = review.feedback(cid, body);
+        else if (reviewAction === "skip") data = review.skip(cid, body);
+        else throw new AppError("接口不存在", 404);
+      } else throw new AppError("接口不存在", 404);
+    } else if (resource === "backup" && request.method === "POST") {
       if (id === "export") {
         data = exportBackup(db);
         if (Buffer.byteLength(JSON.stringify(data)) > MAX_BACKUP)

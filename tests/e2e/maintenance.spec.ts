@@ -104,7 +104,7 @@ test("saved editing, context counts, recycle bin and JSON snapshot recovery thro
     .click();
   const downloaded = await downloadEvent;
   const backup = JSON.parse(await readFile((await downloaded.path())!, "utf8"));
-  expect(backup.schema_version).toBe(2);
+  expect(backup.schema_version).toBe(3);
   expect(backup.expressions.some((e: { id: string }) => e.id === eid)).toBe(
     true,
   );
