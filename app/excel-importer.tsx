@@ -19,7 +19,7 @@ export default function ExcelImporter({
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [choices, setChoices] = useState<Record<string, ImportChoice>>({});
   const [sourceId, setSourceId] = useState("");
-  const [title, setTitle] = useState("Bringing Up Bébé");
+  const [title, setTitle] = useState("");
   const [issuesOnly, setIssuesOnly] = useState(false);
   const [confirmed, setConfirmed] = useState(false),
     [error, setError] = useState("");
@@ -56,6 +56,7 @@ export default function ExcelImporter({
         content,
       });
       setPreview(p);
+      setTitle(p.suggestedTitle);
       setChoices(
         Object.fromEntries(
           p.groups.map((g) => [
@@ -68,7 +69,7 @@ export default function ExcelImporter({
         (s) =>
           s.type === "Reading" &&
           s.lifecycle === "active" &&
-          s.title.toLowerCase() === "bringing up bébé",
+          s.title.trim().toLowerCase() === p.suggestedTitle.toLowerCase(),
       );
       setSourceId(matches.length === 1 ? matches[0].id : "");
     } catch (e) {
@@ -130,8 +131,8 @@ export default function ExcelImporter({
           <section className="panel">
             <h2>01 · 选择表格</h2>
             <p className="muted import-summary">
-              支持当前 Bringing Up Bébé 严格分级格式。仅解析本机文件；统计表与
-              P1 汇总表自动跳过。
+              支持 Bringing Up Bébé 严格分级表和 Our Little Farm
+              章节词汇表。仅解析本机文件；统计表与 P1 汇总表自动跳过。
             </p>
             <Field label="上传 Excel 文件">
               <input
@@ -151,6 +152,7 @@ export default function ExcelImporter({
             <>
               <section className="panel import-section">
                 <h2>02 · 检查范围与来源</h2>
+                <p>已识别：{preview.formatLabel}</p>
                 <p className="import-summary" role="status">
                   章节明细 {preview.totalRows} 行：P1 {preview.counts.P1}、P2{" "}
                   {preview.counts.P2}、P3 {preview.counts.P3}。本次仅可导入
@@ -198,7 +200,7 @@ export default function ExcelImporter({
                   )}
                 </div>
                 <div className="notice">
-                  保留原始词条，不用“复习目标或搭配”替换原文。中文列作为词典义项，英文语境解释单独保存。页码缺失留空，节选不补写。原出现次数只作导入备注，不额外增加
+                  保留原始词条、中文释义与英文语境义。原文与学习改写分开保存，页码缺失留空，节选不补写。原出现次数或合并页码不会额外增加
                   Seen。
                 </div>
               </section>
@@ -308,9 +310,18 @@ export default function ExcelImporter({
                               语境解释：
                               {r.data.importMetadata?.contextMeaningEnglish}
                             </p>
-                            <p>
-                              复习目标：{r.data.importMetadata?.learningTarget}
-                            </p>
+                            {r.data.importMetadata?.profile ===
+                            "little-farm-v1" ? (
+                              <p>
+                                简单英文释义 / 学习改写：
+                                {r.data.importMetadata.simpleParaphrase}
+                              </p>
+                            ) : (
+                              <p>
+                                复习目标：
+                                {r.data.importMetadata?.learningTarget}
+                              </p>
+                            )}
                             <p className="muted">
                               等级理由：{r.data.importMetadata?.rationale}
                             </p>

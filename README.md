@@ -4,7 +4,7 @@ Mac 本地个人英语语料库。当前实现范围为首个闭环及 Excel 严
 
 第一次使用请看 [中文使用指南](documents/USER_GUIDE.md)，或启动后打开 [网站内使用指南](http://127.0.0.1:3000/guide)。本 README 主要用于开发、启动及验收。
 
-功能现状见 [Feature List](documents/FEATURE_LIST.md)；后续计划见 [云端与多设备升级方案](documents/07-云端与多设备升级方案.md)。[PRD v0.4](documents/02-产品需求文档.md) 包含已确认本地基线与尚未实现的 C 阶段，不代表当前已上云。
+功能现状见 [Feature List](documents/FEATURE_LIST.md)；后续计划见 [云端与多设备升级方案](documents/07-云端与多设备升级方案.md)。[PRD v0.5](documents/02-产品需求文档.md) 包含已确认本地基线与尚未实现的 C 阶段，不代表当前已上云。
 
 ## 启动
 
@@ -59,6 +59,8 @@ npm start
 6. 点击“查看本书的表达”，页面自动按 P1 筛选；详情可展开 Excel 导入信息。
 
 表格由服务端在本机解析，不调用 AI；上传后必须由你明确确认才写入。原始文件不被修改，也不会自动提交到 Git。完整规则与验收见 [Excel P1 导入说明](documents/06-Excel-P1导入说明与验收.md)。
+
+Our Little Farm 可直接选择 `resources/Our_Little_Farm_Vocabulary-4.xlsx`，无需改表。应识别 373 条明细、P1/P2/P3=50/192/131，跳过 P1 汇总；自动建议 Our Little Farm 来源。空库全选新增 50 个表达和 50 条语境；已有同词需逐组确认。两种模板都只导入 P1。详见 [新格式说明与验收](documents/10-Our-Little-Farm导入说明与验收.md)。
 
 ## 检查命令
 

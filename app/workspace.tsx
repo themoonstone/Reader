@@ -703,11 +703,17 @@ export default function Workspace() {
                             </summary>
                             <p>文件：{c.data.importMetadata.fileName}</p>
                             <p>
-                              词典中文义项：
+                              {c.data.importMetadata.profile ===
+                              "little-farm-v1"
+                                ? "原表中文释义："
+                                : "词典中文义项："}
                               {c.data.importMetadata.dictionaryChinese}
                             </p>
                             <p>
-                              词典英文解释：
+                              {c.data.importMetadata.profile ===
+                              "little-farm-v1"
+                                ? "核心英文释义："
+                                : "词典英文解释："}
                               {c.data.importMetadata.dictionaryEnglish}
                             </p>
                             <p>
@@ -715,17 +721,49 @@ export default function Workspace() {
                               {c.data.importMetadata.ipa || "未提供"} · 词性：
                               {c.data.importMetadata.partOfSpeech}
                             </p>
+                            {c.data.importMetadata.profile ===
+                              "little-farm-v1" && (
+                              <>
+                                <p>
+                                  原表来源标记 / 页码：
+                                  {c.data.importMetadata.rawSourceLocation ||
+                                    "未提供"}
+                                </p>
+                                <p>
+                                  简单英文释义 / 学习改写：
+                                  {c.data.importMetadata.simpleParaphrase ||
+                                    "未提供"}
+                                </p>
+                                <p>
+                                  原表片段按一行记录一次遇见，不按页码数量叠加。
+                                </p>
+                              </>
+                            )}
+                            {c.data.importMetadata.learningTarget && (
+                              <p>
+                                复习目标或搭配：
+                                {c.data.importMetadata.learningTarget}
+                              </p>
+                            )}
                             <p>
-                              复习目标或搭配：
-                              {c.data.importMetadata.learningTarget}
+                              {c.data.importMetadata.profile ===
+                              "little-farm-v1"
+                                ? "学习理由："
+                                : "严格等级理由："}
+                              {c.data.importMetadata.rationale}
                             </p>
                             <p>
-                              严格等级理由：{c.data.importMetadata.rationale}
-                            </p>
-                            <p>
-                              原等级：{c.data.importMetadata.originalPriority} ·
-                              原表出现次数：{c.data.importMetadata.bookCount}
-                              （不重复计入 Seen）
+                              原等级：
+                              {c.data.importMetadata.originalPriority ||
+                                "未提供"}
+                              {c.data.importMetadata.bookCount && (
+                                <>
+                                  {" "}
+                                  · 原表出现次数：
+                                  {c.data.importMetadata.bookCount}（不重复计入
+                                  Seen）
+                                </>
+                              )}
                             </p>
                             {c.data.importMetadata.priorityConflict && (
                               <p>其他明细含不同等级，本次仅导入严格 P1。</p>

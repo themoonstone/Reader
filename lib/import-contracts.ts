@@ -19,6 +19,9 @@ export type ImportGroup = {
   }[];
 };
 export type ImportPreview = {
+  profile: "bebe-strict-v1" | "little-farm-v1";
+  formatLabel: string;
+  suggestedTitle: string;
   token: string;
   fileName: string;
   totalRows: number;

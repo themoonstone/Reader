@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { parseLittleFarm } from "./little-farm-import";
 import {
   createHash,
   randomBytes,
@@ -160,12 +161,17 @@ export async function previewExcel(
   } catch {
     throw new AppError("无法读取工作簿，请确认文件未加密且格式正确");
   }
-  const rows: ImportRow[] = [],
-    all: { term: string; priority: string }[] = [],
-    skippedSheets: string[] = [];
-  const counts: Record<string, number> = { P1: 0, P2: 0, P3: 0 };
-  let detailSheets = 0;
-  for (const sheet of workbook.worksheets) {
+  const farm = parseLittleFarm(workbook, fileName);
+  const rows: ImportRow[] = farm?.rows ?? [],
+    all: { term: string; priority: string }[] = farm?.all ?? [],
+    skippedSheets: string[] = farm?.skippedSheets ?? [];
+  const counts: Record<string, number> = farm?.counts ?? {
+    P1: 0,
+    P2: 0,
+    P3: 0,
+  };
+  let detailSheets = farm?.detailSheets ?? 0;
+  for (const sheet of farm ? [] : workbook.worksheets) {
     const headers = new Map<string, number>();
     sheet.getRow(1).eachCell((c, i) => headers.set(c.text.trim(), i));
     if (!headers.has("Circled item") || !headers.has("复习优先级（严格版）")) {
@@ -289,6 +295,11 @@ export async function previewExcel(
     }
   }
   return {
+    profile: farm ? "little-farm-v1" : "bebe-strict-v1",
+    formatLabel: farm
+      ? "Our Little Farm 章节词汇表"
+      : "Bringing Up Bébé 严格分级表",
+    suggestedTitle: farm ? "Our Little Farm" : "Bringing Up Bébé",
     token: makeToken({ expires: Date.now() + 30 * 60 * 1000, fileName, rows }),
     fileName,
     totalRows: all.length,
@@ -298,7 +309,9 @@ export async function previewExcel(
     groups: groupsFor(rows, store),
     excludedRows: all.length - rows.length,
     warnings: [
-      "中文列是词典义项；英文语境释义将单独保留，不冒充中文语境翻译。",
+      farm
+        ? "保留原表中文释义与英文语境义；原文片段和学习改写分开保存。合并页码不拆分次数。"
+        : "中文列是词典义项；英文语境释义将单独保留，不冒充中文语境翻译。",
       "只按实际词条与相同中文义项分组，不按变形或搭配自动合并。",
     ],
   };
@@ -372,7 +385,10 @@ export function commitExcel(store: Store, input: unknown): ImportResult {
           id: randomUUID(),
           title: options.title,
           type: "Reading",
-          readingStatus: "finished",
+          readingStatus:
+            payload.rows[0]?.data.importMetadata?.profile === "little-farm-v1"
+              ? "reading"
+              : "finished",
         }).id;
     }
     const result: ImportResult = {

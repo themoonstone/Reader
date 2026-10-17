@@ -97,7 +97,10 @@ export const draftSchema = z.object({
   targetSurface: text(200).default(""),
   importMetadata: z
     .object({
-      profile: z.literal("bebe-strict-v1"),
+      profile: z.enum(["bebe-strict-v1", "little-farm-v1"]),
+      sourceMark: text(500).optional(),
+      rawSourceLocation: text(500).optional(),
+      simpleParaphrase: text(3000).optional(),
       rowKey: z.string().length(64),
       fileName: text(250),
       sheet: text(200),
