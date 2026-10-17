@@ -1317,3 +1317,77 @@ dialog .type-tabs button {
     font-size: 17px;
   }
 }
+
+.import-section {
+  margin-top: 24px;
+}
+.import-summary {
+  margin: 16px 0;
+}
+.import-groups {
+  display: grid;
+  gap: 10px;
+}
+.import-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 18px;
+}
+.import-group summary {
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.import-group summary strong {
+  font:
+    20px Georgia,
+    serif;
+}
+.import-group summary span {
+  color: #81708c;
+  font-size: 12px;
+}
+.import-group summary small {
+  margin-left: auto;
+  color: #94849e;
+}
+.import-group[open] summary {
+  margin-bottom: 18px;
+}
+.import-row {
+  border-top: 1px solid var(--line);
+  padding: 16px 0;
+  font-size: 12px;
+}
+.import-row blockquote {
+  font-size: 16px;
+  margin: 10px 0;
+}
+.import-warning {
+  color: #94672f;
+  margin-top: 8px;
+}
+.import-confirm {
+  font-size: 13px;
+  align-items: flex-start;
+}
+.import-confirm input {
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+.import-provenance {
+  margin: 16px 0;
+  padding: 13px;
+  background: #f8f5fb;
+  border-radius: 7px;
+  font-size: 12px;
+}
+.import-provenance summary {
+  cursor: pointer;
+  color: var(--violet);
+}
+.import-provenance p {
+  margin: 8px 0;
+}

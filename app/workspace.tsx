@@ -11,6 +11,7 @@ import {
 } from "@/lib/contracts";
 import { Capture, Empty, ErrorBox, Modal, SourceForm } from "./components";
 import DraftEditor from "./draft-editor";
+import ExcelImporter from "./excel-importer";
 
 const symbols: Record<string, string> = {
   Reading: "▤",
@@ -137,7 +138,7 @@ export default function Workspace() {
     : undefined;
   const section = view.split("/")[0];
   const navActive =
-    section === "source"
+    section === "source" || section === "import"
       ? "library"
       : section === "draft"
         ? "inbox"
@@ -263,7 +264,12 @@ export default function Workspace() {
                       : "设置"}
             </strong>
           </span>
-          <button onClick={() => setCapture(true)}>＋ 记录表达</button>
+          <div className="actions">
+            <button className="secondary" onClick={() => navigate("import")}>
+              导入 Excel
+            </button>
+            <button onClick={() => setCapture(true)}>＋ 记录表达</button>
+          </div>
         </header>
         <div className="content">
           {notice && (
@@ -653,9 +659,53 @@ export default function Workspace() {
                           <p className="muted">未提供原句</p>
                         )}
                         <p>
-                          <span className="muted">语境释义　</span>
+                          <span className="muted">
+                            {c.data.importMetadata
+                              ? "英文语境释义　"
+                              : "语境释义　"}
+                          </span>
                           {c.data.meaning}
                         </p>
+                        {c.data.importMetadata && (
+                          <details className="import-provenance">
+                            <summary>
+                              Excel 导入信息 · {c.data.importMetadata.sheet} 第{" "}
+                              {c.data.importMetadata.row} 行
+                            </summary>
+                            <p>文件：{c.data.importMetadata.fileName}</p>
+                            <p>
+                              词典中文义项：
+                              {c.data.importMetadata.dictionaryChinese}
+                            </p>
+                            <p>
+                              词典英文解释：
+                              {c.data.importMetadata.dictionaryEnglish}
+                            </p>
+                            <p>
+                              音标（原表记录）：
+                              {c.data.importMetadata.ipa || "未提供"} · 词性：
+                              {c.data.importMetadata.partOfSpeech}
+                            </p>
+                            <p>
+                              复习目标或搭配：
+                              {c.data.importMetadata.learningTarget}
+                            </p>
+                            <p>
+                              严格等级理由：{c.data.importMetadata.rationale}
+                            </p>
+                            <p>
+                              原等级：{c.data.importMetadata.originalPriority} ·
+                              原表出现次数：{c.data.importMetadata.bookCount}
+                              （不重复计入 Seen）
+                            </p>
+                            {c.data.importMetadata.priorityConflict && (
+                              <p>其他明细含不同等级，本次仅导入严格 P1。</p>
+                            )}
+                            {c.data.importMetadata.excerpt && (
+                              <p>上下文为原表节选，未补写。</p>
+                            )}
+                          </details>
+                        )}
                         {c.data.eventKind === "output_corrected" && (
                           <div className="correction">
                             <p>
@@ -680,6 +730,7 @@ export default function Workspace() {
                         <footer className="context-reason">
                           <span>
                             Why saved · {reasonLabels[c.data.whySaved]}
+                            {c.data.importMetadata ? "（导入默认）" : ""}
                           </span>
                           {c.data.note && <p>{c.data.note}</p>}
                         </footer>
@@ -697,6 +748,17 @@ export default function Workspace() {
                     回到来源库
                   </button>
                 </Empty>
+              )}
+              {view === "import" && (
+                <ExcelImporter
+                  sources={sources}
+                  onDone={(id) => {
+                    setQuery("");
+                    setPriority("P1");
+                    refresh();
+                    navigate(`source/${id}`);
+                  }}
+                />
               )}
               {view === "settings" && (
                 <>

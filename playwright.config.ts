@@ -20,6 +20,7 @@ export default defineConfig({
     env: {
       READWORDS_DB_PATH: join(tmpdir(), `readwords-e2e-${process.pid}.sqlite`),
       NEXT_TELEMETRY_DISABLED: "1",
+      READWORDS_DIST_DIR: ".next-e2e",
     },
   },
 });

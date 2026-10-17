@@ -28,6 +28,7 @@ type Row = Record<string, string | number | null>;
 const now = () => new Date().toISOString();
 export class Store {
   db: DatabaseSync;
+  private transactionDepth = 0;
   constructor(path: string) {
     if (path !== ":memory:")
       mkdirSync(dirname(resolve(path)), { recursive: true, mode: 0o700 });
@@ -65,14 +66,23 @@ export class Store {
     this.db.close();
   }
   transaction<T>(fn: () => T): T {
-    this.db.exec("BEGIN IMMEDIATE");
+    const depth = this.transactionDepth++;
+    const savepoint = `rw_${depth}`;
     try {
+      this.db.exec(depth === 0 ? "BEGIN IMMEDIATE" : `SAVEPOINT ${savepoint}`);
       const result = fn();
-      this.db.exec("COMMIT");
+      this.db.exec(depth === 0 ? "COMMIT" : `RELEASE ${savepoint}`);
       return result;
     } catch (e) {
-      this.db.exec("ROLLBACK");
+      if (this.db.isTransaction)
+        this.db.exec(
+          depth === 0
+            ? "ROLLBACK"
+            : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`,
+        );
       throw e;
+    } finally {
+      this.transactionDepth--;
     }
   }
   one(sql: string, ...params: (string | number | null)[]) {
@@ -459,6 +469,15 @@ export class Store {
 }
 const globalStore = globalThis as unknown as { readwordsStore?: Store };
 export function getStore() {
+  // Refresh the connection/service after a development hot reload; otherwise a
+  // cached instance can retain obsolete transaction logic from an earlier build.
+  if (
+    globalStore.readwordsStore &&
+    !(globalStore.readwordsStore instanceof Store)
+  ) {
+    (globalStore.readwordsStore as Store).close();
+    globalStore.readwordsStore = undefined;
+  }
   return (globalStore.readwordsStore ??= new Store(
     process.env.READWORDS_DB_PATH ||
       resolve(process.cwd(), "data/readwords.sqlite"),

@@ -16,6 +16,7 @@
     "format:check": "prettier --check app lib tests next.config.ts playwright.config.ts postcss.config.mjs package.json tsconfig.json"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
     "next": "^16.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -31,5 +32,10 @@
     "tailwindcss": "^4.1.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
   }
 }

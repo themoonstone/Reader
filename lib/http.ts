@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AppError, getStore, type Store } from "./store";
+import { previewExcel, commitExcel } from "./excel-import";
 
 export async function handle(
   request: Request,
@@ -47,9 +48,23 @@ export async function handle(
       else throw new AppError("接口不存在", 404);
       return Response.json(data, { headers });
     }
-    const raw = await request.text();
-    if (Buffer.byteLength(raw) > 128 * 1024)
-      throw new AppError("请求过大", 413);
+    const limit = resource === "imports" ? 8 * 1024 * 1024 : 128 * 1024;
+    const reader = request.body?.getReader();
+    let size = 0;
+    const chunks: Uint8Array[] = [];
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.length;
+        if (size > limit) {
+          await reader.cancel();
+          throw new AppError("请求过大", 413);
+        }
+        chunks.push(value);
+      }
+    }
+    const raw = Buffer.concat(chunks).toString("utf8");
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
@@ -58,7 +73,32 @@ export async function handle(
     }
     const body = z.record(z.string(), z.unknown()).parse(parsed);
     let data;
-    if (resource === "sources" && request.method === "POST" && !id)
+    if (
+      resource === "imports" &&
+      id === "preview" &&
+      request.method === "POST"
+    ) {
+      const file = z
+        .object({
+          fileName: z.string().max(250),
+          content: z
+            .string()
+            .max(7 * 1024 * 1024)
+            .regex(/^[A-Za-z0-9+/]*={0,2}$/),
+        })
+        .parse(body);
+      data = await previewExcel(
+        Buffer.from(file.content, "base64"),
+        file.fileName,
+        db,
+      );
+    } else if (
+      resource === "imports" &&
+      id === "commit" &&
+      request.method === "POST"
+    )
+      data = commitExcel(db, body);
+    else if (resource === "sources" && request.method === "POST" && !id)
       data = db.createSource(body);
     else if (resource === "sources" && request.method === "PATCH" && id)
       data = db.updateSource(

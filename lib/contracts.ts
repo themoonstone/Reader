@@ -95,6 +95,27 @@ export const draftSchema = z.object({
   intendedMeaning: text().default(""),
   alternative: text().default(""),
   targetSurface: text(200).default(""),
+  importMetadata: z
+    .object({
+      profile: z.literal("bebe-strict-v1"),
+      rowKey: z.string().length(64),
+      fileName: text(250),
+      sheet: text(200),
+      row: z.number().int().positive(),
+      contextMeaningEnglish: text(3000),
+      dictionaryEnglish: text(3000),
+      dictionaryChinese: text(1000),
+      ipa: text(500),
+      partOfSpeech: text(200),
+      rationale: text(3000),
+      learningTarget: text(1000),
+      originalPriority: text(200),
+      normalizedItem: text(200),
+      bookCount: text(100),
+      priorityConflict: z.boolean(),
+      excerpt: z.boolean(),
+    })
+    .optional(),
 });
 export type DraftInput = z.infer<typeof draftSchema>;
 export type SourceInput = z.infer<typeof sourceSchema>;

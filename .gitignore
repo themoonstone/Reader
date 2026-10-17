@@ -1,5 +1,7 @@
 node_modules/
 .next/
+.next-e2e/
+.next-verify/
 data/
 .env*
 !.env.example
@@ -8,3 +10,4 @@ playwright-report/
 test-results/
 .DS_Store
 *.sqlite*
+resources/*.xlsx
