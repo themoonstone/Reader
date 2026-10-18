@@ -1,6 +1,6 @@
 # ReadWords
 
-Mac 本地个人英语语料库。当前实现范围为首个闭环及 Excel 严格 P1 导入：**Source → 手动采集 → Inbox → 保存 → 搜索详情**，并非完整 R0。
+个人英语语料库，默认在 Mac 本地运行。已实现手动采集闭环、两种 Excel P1 导入、数据维护、JSON 备份恢复和 RV-A 认义复习；邮箱密码云端版本已做私有预部署，尚未正式上线，并非完整 R0。
 
 第一次使用请看 [中文使用指南](documents/USER_GUIDE.md)，或启动后打开 [网站内使用指南](http://127.0.0.1:3000/guide)。本 README 主要用于开发、启动及验收。
 
@@ -35,7 +35,7 @@ npm start
 
 可在 `.env.local` 设置 `READWORDS_DB_PATH=/绝对路径/readwords.sqlite`，然后重启服务；这会切换数据库位置，**不会自动搬迁原有数据**。
 
-左下“本地工作空间”→“备份与恢复”可下载全库 JSON（schema 3，兼容有效 schema 2，上限 50 MB），恢复时先校验和预览、生成当前库快照，再确认整库替换。恢复后旧窗口须复制输入并刷新。快照按数据库文件名隔离，默认在 `data/snapshots/readwords.sqlite/`，与数据库同机，不代替异地备份；尚无定时备份。详见 [备份与维护说明](documents/09-备份恢复与数据维护.md)。
+左下“本地工作空间”→“备份与恢复”可下载全库 JSON（schema 3，兼容有效 schema 2，上限 50 MB），恢复时先校验和预览、生成当前库快照，再确认整库替换。恢复后旧窗口须复制输入并刷新。快照按数据库文件名隔离，默认在 `data/snapshots/readwords.sqlite/`，与数据库同机，不代替异地备份；默认本地模式没有启用定时备份，云端定时作业有脚本但仍需真实存储配置与恢复验收。详见 [备份与维护说明](documents/09-备份恢复与数据维护.md)。
 
 首次打开原 schema v1/v2 数据库会在相应升级前生成 `before-schema-v2-*.sqlite` / `before-schema-v3-*.sqlite` 一致性快照，再事务升级到当前 v3。旧 schema 2 JSON 恢复会清除复习进度，须检查预览警告。不要在运行中手动替换数据库；应急回退步骤见上述说明。
 
@@ -80,12 +80,11 @@ E2E 使用本机已安装的 Google Chrome、独立 3100 端口和系统临时�
 - 已有：Excel 严格 P1 导入、四类来源、来源编辑/归档、表达编辑/归档/回收站、语境编辑/归属调整/删除恢复、JSON 备份恢复、手动采集、Inbox 自动保存/忽略恢复、义项候选与重复事件确认、原子入库、搜索筛选和多语境详情。
 - 后续 R0：Review 完整验收与 RV-B、真实 AI、来源删除、容量性能及完整 Mac 验收。
 - 后续 R1：OCR、PWA、CSV、统计。
-- 无登录、云端同步或后台外部调用。安装依赖后，本地核心流程运行无需外网。
+- 默认 local 模式无需登录，安装依赖后核心流程无需外网；cloud 模式使用邮箱密码和远端认证，每次身份校验需要网络。没有离线双向同步或后台 AI/OCR 批量调用。
 
 详细规则见 [PRD](documents/02-产品需求文档.md)、[技术设计](documents/04-技术设计与首个闭环.md) 和 [阶段验收记录](documents/05-首个闭环验收记录.md)。
-# Reader
+## 上云部署现状
 
+上云准备现已提供邮箱＋密码（Supabase Auth、唯一所有者）、服务端权限校验、维护只读、原生 SQLite 一致性备份/核对、Docker/Caddy 与定时 restic 加密备份配置。默认仍为本地模式。真实 Supabase 的 Mac 登录、退出重登已验证；香港 Ubuntu 服务器已运行私有 preview 容器，健康、鉴权和空库容器重建保卷检查通过。phrasebud.com 状态正常、根域 A 已配置；HTTPS 代理、受信证书与 Mac 公网直连检查通过，空 preview 库的 https://phrasebud.com 已可访问。外部真实登录、SMTP/恢复、异地备份和数据迁移尚待完成。不是 Git push 后自动上云。
 
-上云准备现已提供邮箱＋密码（Supabase Auth、唯一所有者）、服务端权限校验、维护只读、原生 SQLite 一致性备份/核对、Docker/Caddy 与定时 restic 加密备份配置。默认仍为本地模式，未部署线上服务。真实认证项目、SMTP、服务器/域名和异地备份仓库尚待配置与验收；不是 Git push 后自动上云。
-
-配置与完整操作见 [邮箱登录及部署手册](documents/15-邮箱登录配置与部署操作手册.md)，实现及真实缺口见 [上云自检记录](documents/16-上云准备实现与自检记录.md)。追加检查命令：`npm run test:e2e:cloud`（仅合成认证服务和临时库）、`npm run ops -- manifest /absolute/path/readwords.sqlite`。Docker 文件位于 `deploy/`；当前环境没有 Docker，不宣称已通过真实容器部署。
+配置与完整操作见 [邮箱登录及部署手册](documents/15-邮箱登录配置与部署操作手册.md)，实现及真实缺口见 [上云自检记录](documents/16-上云准备实现与自检记录.md)。追加检查命令：`npm run test:e2e:cloud`（仅合成认证服务和临时库）、`npm run ops -- manifest /absolute/path/readwords.sqlite`。Docker 文件位于 `deploy/`；服务器实况见 [PhraseBud 部署记录](documents/17-PhraseBud部署执行记录.md)，COS 创建及加密恢复流程见 [异地备份手册](documents/18-COS异地备份与恢复实施手册.md)，文档入口与核对结果见 [完整性自检](documents/19-部署文档完整性自检.md)。私有预部署不等于 HTTPS 正式上线。

@@ -1,0 +1,36 @@
+# Standalone private backup rehearsal. Source volume must already exist.
+# For production use compose.yaml's backup service; do not run duplicate jobs.
+name: ${READWORDS_BACKUP_PROJECT:?set isolated backup project name}
+services:
+  backup:
+    image: ${READWORDS_IMAGE:?set validated server image}
+    restart: unless-stopped
+    init: true
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["while true; do node scripts/backup-job.mts; sleep 86400; done"]
+    environment:
+      READWORDS_DB_PATH: /app/data/readwords.sqlite
+      READWORDS_BACKUP_DIR: /app/backups
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:?set isolated remote repository}
+      RESTIC_PASSWORD_FILE: /run/secrets/restic_password
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?set dedicated COS SecretId}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?set dedicated COS SecretKey}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:?set bucket region}
+      TZ: Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "node", "-e", "const fs=require('node:fs');try{if(Date.now()-fs.statSync('/app/backups/.last-success').mtimeMs>26*3600000)process.exit(1)}catch{process.exit(1)}"]
+      interval: 60s
+      timeout: 5s
+      start_period: 60s
+    secrets: [restic_password]
+    volumes:
+      - source-data:/app/data:ro
+      - backup-cache:/app/backups
+secrets:
+  restic_password:
+    file: ${RESTIC_PASSWORD_FILE:?set host password file outside repository}
+volumes:
+  source-data:
+    external: true
+    name: ${READWORDS_DATA_VOLUME:?set verified existing source volume}
+  backup-cache:

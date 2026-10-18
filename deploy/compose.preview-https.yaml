@@ -1,0 +1,19 @@
+# Explicit opt-in HTTPS validation against the empty preview database.
+# Use together with compose.preview.yaml; does not migrate production data.
+services:
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      READWORDS_DOMAIN: ${READWORDS_DOMAIN:?set domain}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - preview-caddy-data:/data
+      - preview-caddy-config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+volumes:
+  preview-caddy-data:
+  preview-caddy-config:

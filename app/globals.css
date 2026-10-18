@@ -1135,15 +1135,25 @@ dialog .type-tabs button {
   }
 }
 @media (max-width: 850px) {
+  .app-shell {
+    flex-direction: column;
+  }
   .sidebar {
-    width: 160px;
-    padding-left: 10px;
-    padding-right: 10px;
+    position: static;
+    inset: auto;
+    width: 100%;
+    padding: 16px 20px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
   }
   .brand {
     font-size: 17px;
     gap: 8px;
-    margin-left: 5px;
+    margin: 0;
   }
   .brand-mark {
     font-size: 34px;
@@ -1151,15 +1161,52 @@ dialog .type-tabs button {
   .brand small {
     font-size: 8px;
   }
-  .sidebar-note {
-    padding-left: 8px;
+  .sidebar-note,
+  .nav-label {
+    display: none;
+  }
+  .sidebar nav {
+    order: 3;
+    flex: 1 1 100%;
+    min-width: 0;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
   .nav-item {
-    gap: 8px;
-    padding-left: 10px;
+    position: relative;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    min-height: 64px;
+    padding: 8px 2px;
+    text-align: center;
+    justify-content: center;
+  }
+  .nav-item > span:not(.nav-icon):not(.nav-count) {
+    font-size: 0;
+  }
+  .nav-item small {
+    display: block;
+    color: inherit;
+    font-size: 12px;
+  }
+  .nav-count {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+  }
+  .local-status {
+    order: 1;
+    width: auto;
+    margin-left: auto;
+    padding: 8px 10px;
+    min-height: 44px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    white-space: nowrap;
   }
   main {
-    margin-left: 160px;
+    margin-left: 0;
+    width: 100%;
   }
   .content {
     padding: 28px 23px;
@@ -1215,47 +1262,33 @@ dialog .type-tabs button {
 }
 @media (max-width: 560px) {
   .sidebar {
-    width: 72px;
-    padding: 24px 8px;
+    padding: 14px 16px;
   }
-  .brand {
-    margin: 0 auto 38px;
-  }
-  .brand > div,
   .brand small,
-  .nav-label,
-  .nav-item > span:not(.nav-icon),
-  .sidebar-note,
-  .local-status > span:last-child {
+  .topbar > span {
     display: none;
-  }
-  .nav-item {
-    justify-content: center;
-    padding: 13px 0;
-  }
-  .local-status {
-    font-size: 0;
-    justify-content: center;
-  }
-  .status-dot {
-    width: 8px;
-    height: 8px;
-  }
-  main {
-    margin-left: 72px;
   }
   .content {
     padding: 24px 16px;
   }
   .topbar {
-    padding: 0 16px;
-    gap: 12px;
+    height: auto;
+    padding: 12px 16px;
   }
-  .topbar > span {
-    display: none;
+  .topbar .actions {
+    width: 100%;
+    justify-content: flex-end;
+    gap: 8px;
   }
   .topbar button {
-    margin-left: auto;
+    padding: 8px 12px;
+  }
+  .field input,
+  .field textarea,
+  .field select,
+  .search-input input,
+  .auth-shell input {
+    font-size: 16px;
   }
   .page-heading {
     flex-wrap: wrap;
@@ -1274,6 +1307,15 @@ dialog .type-tabs button {
   }
   .type-tabs button {
     padding: 6px 10px;
+  }
+  .library-banner {
+    min-height: 0;
+  }
+  .library-banner h2 {
+    font-size: 24px;
+  }
+  .empty {
+    padding: 36px 16px;
   }
   .form-grid {
     grid-template-columns: 1fr;
@@ -1719,4 +1761,32 @@ dialog .type-tabs button {
 .account {
   overflow-wrap: anywhere;
   padding: 0 16px 12px;
+}
+@media (max-width: 850px) {
+  .sidebar .account {
+    order: 2;
+    flex: 1 1 100%;
+    min-width: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 0 0;
+    border-top: 1px solid var(--line);
+  }
+  .account-email {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 13px;
+  }
+  .account button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .account [role="alert"] {
+    flex-basis: 100%;
+  }
 }

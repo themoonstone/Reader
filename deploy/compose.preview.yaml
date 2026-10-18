@@ -1,0 +1,21 @@
+# Private server validation before DNS/HTTPS and production data migration.
+# No published ports, no production volume, and no automatic backup claims.
+name: phrasebud-preview
+services:
+  app:
+    image: ${READWORDS_IMAGE:-readwords:phrasebud-amd64}
+    restart: unless-stopped
+    init: true
+    environment:
+      READWORDS_MODE: cloud
+      READWORDS_ORIGIN: https://${READWORDS_DOMAIN:?set domain}
+      READWORDS_DB_PATH: /app/data/readwords.sqlite
+      SUPABASE_URL: ${SUPABASE_URL:?set auth URL}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?set publishable key}
+      READWORDS_OWNER_ID: ${READWORDS_OWNER_ID:?set owner UUID}
+      READWORDS_OWNER_EMAIL: ${READWORDS_OWNER_EMAIL:?set owner email}
+      TZ: Asia/Shanghai
+    volumes:
+      - preview-data:/app/data
+volumes:
+  preview-data:

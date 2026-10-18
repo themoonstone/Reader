@@ -13,7 +13,9 @@ export default function Account() {
   if (!email) return null;
   return (
     <div className="account">
-      <p>{email}</p>
+      <p className="account-email" title={email}>
+        {email}
+      </p>
       <button
         disabled={busy}
         onClick={async () => {

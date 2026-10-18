@@ -1,4 +1,104 @@
 import { test, expect } from "@playwright/test";
+test("Signed-in mobile workspace keeps account, navigation and dialogs usable without horizontal overflow", async ({
+  page,
+}, testInfo) => {
+  const longEmail =
+    "a-long-personal-reading-account-for-mobile-layout@example.test";
+  await page.route("**/api/auth/session", async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    await route.fulfill({ response, json: { ...data, email: longEmail } });
+  });
+  await page.goto("/login");
+  await page.getByLabel("邮箱", { exact: true }).fill("owner@example.test");
+  await page.getByLabel("密码", { exact: true }).fill("cloud-test-password");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  const logout = page.getByRole("button", { name: "退出登录", exact: true });
+  await expect(logout).toBeVisible();
+  await expect(page.locator(".account-email")).toHaveAttribute(
+    "title",
+    longEmail,
+  );
+  for (const width of [320, 393, 430, 768, 1280]) {
+    await page.setViewportSize({ width, height: 852 });
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+      `No page overflow at ${width}px`,
+    ).toBeTruthy();
+    const sidebar = (await page.locator(".sidebar").boundingBox())!;
+    const main = (await page.locator("main").boundingBox())!;
+    if (width <= 850) {
+      expect(main.x).toBe(0);
+      expect(main.y).toBeGreaterThanOrEqual(sidebar.y + sidebar.height - 1);
+      expect((await logout.boundingBox())!.height).toBeLessThan(56);
+      expect(
+        await logout.evaluate((el) => getComputedStyle(el).whiteSpace),
+      ).toBe("nowrap");
+      const nav = page.locator(".sidebar nav button");
+      await expect(nav).toHaveCount(4);
+      for (const button of await nav.all()) {
+        const box = (await button.boundingBox())!;
+        expect(box.width).toBeGreaterThanOrEqual(44);
+        expect(box.height).toBeGreaterThanOrEqual(44);
+      }
+    } else {
+      expect(main.x).toBe(224);
+      expect(sidebar.width).toBe(224);
+    }
+    if (width === 393 || width === 1280)
+      await page.screenshot({
+        path: testInfo.outputPath(`workspace-${width}.png`),
+        fullPage: true,
+      });
+  }
+  await page.setViewportSize({ width: 393, height: 852 });
+  const nav = page.getByRole("navigation", { name: "主导航" });
+  for (const [label, heading] of [
+    ["Inbox", "Inbox"],
+    ["Review", "近期想练"],
+    ["Search", "Search"],
+    ["Library", "每一种遇见"],
+  ]) {
+    await nav.getByRole("button", { name: new RegExp(label) }).click();
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(
+      heading,
+    );
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    ).toBeTruthy();
+  }
+  await page.getByRole("button", { name: /云端工作空间/ }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    "云端工作空间",
+  );
+  await nav.getByRole("button", { name: /Library/ }).click();
+  await page
+    .getByRole("button", { name: "＋ 新建来源", exact: true })
+    .first()
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("标题 *", { exact: true }).fill("Mobile layout test");
+  expect(
+    await dialog
+      .getByLabel("标题 *", { exact: true })
+      .evaluate((el) => parseFloat(getComputedStyle(el).fontSize)),
+  ).toBeGreaterThanOrEqual(16);
+  const box = (await dialog.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(393);
+  await dialog.getByRole("button", { name: "创建来源", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Mobile layout test", exact: true }),
+  ).toBeVisible();
+  await logout.click();
+  await expect(page).toHaveURL(/\/login$/);
+  expect((await page.request.get("/api/sources")).status()).toBe(401);
+});
 test("Private email login, API protection, refresh cookies, original source workflow, logout and password recovery", async ({
   page,
   context,
