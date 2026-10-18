@@ -13,7 +13,11 @@ import { join } from "node:path";
 const directory = process.env.READWORDS_BACKUP_DIR || "/app/backups";
 let lock: number | undefined;
 function restic(args: string[]) {
-  const result = spawnSync("restic", args, {
+  const lookup = process.env.READWORDS_RESTIC_S3_BUCKET_LOOKUP || "auto";
+  if (!["auto", "dns", "path"].includes(lookup))
+    throw Error("备份寻址配置无效");
+  const options = lookup === "auto" ? [] : ["-o", `s3.bucket-lookup=${lookup}`];
+  const result = spawnSync("restic", [...options, ...args], {
     stdio: "ignore",
     timeout: 30 * 60 * 1000,
     env: process.env,

@@ -1,0 +1,35 @@
+{
+  "version": "2.0",
+  "statement": [
+    {
+      "effect": "allow",
+      "action": [
+        "name/cos:GetBucket",
+        "name/cos:HeadBucket",
+        "name/cos:GetBucketLocation",
+        "name/cos:ListMultipartUploads"
+      ],
+      "resource": [
+        "qcs::cos:ap-singapore:uid/1257731701:phrasebud-storage-1257731701/*"
+      ]
+    },
+    {
+      "effect": "allow",
+      "action": [
+        "name/cos:GetObject",
+        "name/cos:HeadObject",
+        "name/cos:PutObject",
+        "name/cos:DeleteObject",
+        "name/cos:InitiateMultipartUpload",
+        "name/cos:UploadPart",
+        "name/cos:CompleteMultipartUpload",
+        "name/cos:AbortMultipartUpload",
+        "name/cos:ListParts"
+      ],
+      "resource": [
+        "qcs::cos:ap-singapore:uid/1257731701:phrasebud-storage-1257731701/phrasebud-preview/*",
+        "qcs::cos:ap-singapore:uid/1257731701:phrasebud-storage-1257731701/phrasebud-production/*"
+      ]
+    }
+  ]
+}

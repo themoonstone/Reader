@@ -48,6 +48,7 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      READWORDS_RESTIC_S3_BUCKET_LOOKUP: ${READWORDS_RESTIC_S3_BUCKET_LOOKUP:-auto}
       TZ: Asia/Shanghai
     healthcheck:
       test: ["CMD", "node", "-e", "const fs=require('node:fs');try{if(Date.now()-fs.statSync('/app/backups/.last-success').mtimeMs>26*3600000)process.exit(1)}catch{process.exit(1)}"]

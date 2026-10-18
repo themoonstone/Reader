@@ -1,12 +1,12 @@
 # COS 异地加密备份与恢复实施手册
 
-版本：0.1；日期：2026-10-18。适用：单用户 PhraseBud / ReadWords，Node 24、SQLite schema 3、restic。依赖 [15](15-邮箱登录配置与部署操作手册.md)、[17](17-PhraseBud部署执行记录.md)。本文先明确实施合同；执行结果在末尾按证据更新。尚无 COS 桶或访问凭据，不能声称已开启异地备份。
+版本：0.1；日期：2026-10-18。适用：单用户 PhraseBud / ReadWords，Node 24、SQLite schema 3、restic。依赖 [15](15-邮箱登录配置与部署操作手册.md)、[17](17-PhraseBud部署执行记录.md)。本文先明确实施合同；执行结果在末尾按证据更新。新加坡 COS 已完成首次加密备份、完整读回和隔离恢复；每日服务已启动，宿主机重启与重启后新备份已通过；跨日调度仍待验收。执行证据见 §11。
 
 ## 1. 目标和边界
 
 香港服务器保存日常 SQLite；异地对象存储保存 restic 客户端加密仓库。建议使用新加坡 COS（`ap-singapore`），与应用分开地域；同属腾讯云账号不等于独立账号容灾，后续可另评估跨账号/供应商副本。选择新加坡是本项目建议，不是平台强制要求。
 
-当前只能对服务器的**空 preview 测试库**演练。Mac 正式学习库尚未迁移，也不会自动被服务器任务备份。正式切换时须改数据卷和仓库前缀，并重新验收。
+当前备份对象仅为服务器的 **preview 数据卷**；早期原生备份检查使用空库，本轮恢复以该次一致性快照为基准，不假设当前库仍为空。Mac 正式学习库尚未迁移，也不会自动被服务器任务备份。正式切换时须改数据卷和仓库前缀，并重新验收。
 
 目标是每次成功备份间隔约一天、超过 26 小时无成功标记显示 unhealthy；这是监测阈值，不是保证不丢 24 小时以上数据。首次成功、失败处理、恢复演练均通过后才标“已配置”；实际连续调度须另记录。当前没有外部告警通知渠道。
 
@@ -41,7 +41,7 @@
 
 ## 4. 配置与隔离合同
 
-独立备份 Compose：`deploy/compose.backup.yaml`，已补齐并完成合成环境变量下的结构校验。它引用已有数据卷并只读挂载，**不创建或迁移源库**；不发布端口、不依赖域名、不含 Supabase 凭据。镜像使用已验证的 `readwords:phrasebud-amd64`。
+独立备份 Compose：`deploy/compose.backup.yaml`，已补齐并完成合成环境变量下的结构校验。它引用已有数据卷并只读挂载，**不创建或迁移源库**；不发布端口、不依赖域名、不含 Supabase 凭据。初始镜像为已验证的 `readwords:phrasebud-amd64`；当前服务器备份服务已升级到 `readwords:cos-backup-20261018`（见 §11）。
 
 服务器配置约定：`/home/ubuntu/.config/phrasebud-backup/backup.env` 和 `restic-password`，目录 700、文件 600；目前服务器 ubuntu 和镜像 node 的 UID 都为 1000，因此该密码文件可被备份容器读取。其他环境须重新核对 UID，不能将文件改成全局可读来解决权限问题。
 
@@ -56,9 +56,10 @@ RESTIC_PASSWORD_FILE=/home/ubuntu/.config/phrasebud-backup/restic-password
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 AWS_DEFAULT_REGION=ap-singapore
+READWORDS_RESTIC_S3_BUCKET_LOOKUP=dns
 ```
 
-COS 使用 S3 兼容的 region endpoint 与完整桶名，连接须通过真实 init/备份/恢复验收。预演前缀 `phrasebud-preview` 和正式前缀 `phrasebud-production` **分别初始化成独立仓库**。现有脚本使用固定 host/tag `readwords` 做保留分组，不能让两套环境指向同一仓库，否则会相互参与保留清理。
+COS 使用 S3 兼容的 region endpoint 与完整桶名；本次实际需要 `-o s3.bucket-lookup=dns`。脚本通过 `READWORDS_RESTIC_S3_BUCKET_LOOKUP=dns` 将此参数传给 backup、forget、check；手工 restic 命令须显式添加，Compose 环境变量不会自动变为 restic 参数。其他提供商默认 auto；只允许 auto/dns/path。预演前缀 `phrasebud-preview` 和正式前缀 `phrasebud-production` **分别初始化成独立仓库**。现有脚本使用固定 host/tag `readwords` 做保留分组，不能让两套环境指向同一仓库，否则会相互参与保留清理。
 
 生产数据卷来自正式 Compose 的 `learning-data`，以实际 `docker volume ls` 和容器 mount 核对，不能沿用 preview 卷名。预演备份缓存卷为独立 `phrasebud-backup-preview_backup-cache`，不作为异地副本。正式上线沿用 `deploy/compose.yaml` 的 backup 服务和正式缓存卷，先停止预演调度；不得同时对同一数据库/仓库启动两套调度。若未来独立部署生产备份，使用另一项目名及缓存卷，并显式关闭正式 Compose 中的重复任务。
 
@@ -69,9 +70,9 @@ COS 使用 S3 兼容的 region endpoint 与完整桶名，连接须通过真实 
 ```bash
 cd /home/ubuntu/readwords/source
 docker compose --env-file /home/ubuntu/.config/phrasebud-backup/backup.env -f deploy/compose.backup.yaml config --quiet
-docker compose --env-file /home/ubuntu/.config/phrasebud-backup/backup.env -f deploy/compose.backup.yaml run --rm --no-deps --entrypoint restic backup init
+docker compose --env-file /home/ubuntu/.config/phrasebud-backup/backup.env -f deploy/compose.backup.yaml run --rm --no-deps --entrypoint restic backup -o s3.bucket-lookup=dns init
 docker compose --env-file /home/ubuntu/.config/phrasebud-backup/backup.env -f deploy/compose.backup.yaml run --rm --no-deps --entrypoint node backup scripts/backup-job.mts
-docker compose --env-file /home/ubuntu/.config/phrasebud-backup/backup.env -f deploy/compose.backup.yaml run --rm --no-deps --entrypoint restic backup snapshots
+docker compose --env-file /home/ubuntu/.config/phrasebud-backup/backup.env -f deploy/compose.backup.yaml run --rm --no-deps --entrypoint restic backup -o s3.bucket-lookup=dns snapshots
 ```
 
 `init` 仅执行一次；若已有仓库，先 `snapshots` / `check` 验证，不能重新初始化或覆盖。单次作业必须退出 0、出现 `READWORDS_BACKUP_OK` 并产生本次 `.last-success`；仅桶中有对象不等于成功。`restic check` 默认检查仓库结构/元数据，不等于完整读回全部加密数据。
@@ -86,20 +87,22 @@ docker compose --env-file /home/ubuntu/.config/phrasebud-backup/backup.env -f de
 
 ```bash
 cd /home/ubuntu/readwords/source
-docker compose --env-file /home/ubuntu/.config/phrasebud-backup/backup.env -f deploy/compose.backup.yaml run --rm --no-deps --entrypoint restic backup check --read-data
+docker compose --env-file /home/ubuntu/.config/phrasebud-backup/backup.env -f deploy/compose.backup.yaml run --rm --no-deps --entrypoint restic backup -o s3.bucket-lookup=dns check --read-data
 ```
 
 随后将 `实际快照ID` 换成刚完成备份的快照 ID：
 
 ```bash
-docker compose --env-file /home/ubuntu/.config/phrasebud-backup/backup.env -f deploy/compose.backup.yaml run --rm --no-deps --entrypoint restic -v /home/ubuntu/readwords-restore-drill:/restore backup restore 实际快照ID --target /restore
+docker compose --env-file /home/ubuntu/.config/phrasebud-backup/backup.env -f deploy/compose.backup.yaml run --rm --no-deps --entrypoint restic -v /home/ubuntu/readwords-restore-drill:/restore backup -o s3.bucket-lookup=dns restore 实际快照ID --target /restore
 ```
 
 在恢复的 `/restore/app/backups/` 中选择该次最新 SQLite 文件。将下列 `实际文件名.sqlite` 替换后核对：
 
 ```bash
-docker compose --env-file /home/ubuntu/.config/phrasebud-backup/backup.env -f deploy/compose.backup.yaml run --rm --no-deps --entrypoint node -v /home/ubuntu/readwords-restore-drill:/restore:ro backup scripts/ops.mts compare /app/data/readwords.sqlite /restore/app/backups/实际文件名.sqlite
+docker compose --env-file /home/ubuntu/.config/phrasebud-backup/backup.env -f deploy/compose.backup.yaml run --rm --no-deps --entrypoint node -v /home/ubuntu/readwords-restore-drill:/restore backup scripts/ops.mts compare /app/data/readwords.sqlite /restore/app/backups/实际文件名.sqlite
 ```
+
+恢复目录需要允许 SQLite 创建 WAL/SHM 运行侧文件；只给该隔离目录可写权限，不把原业务卷改成可写。备份缓存中的该次快照也可作为比较基准，避免业务继续写入造成误判；不得与不同时间点的实时库直接比较。
 
 compare 同时验证 schema、完整性、外键、八张业务表字段摘要和 generation。首轮空库演练通过只证明管道，正式迁移后必须再验一次含真实内容的备份恢复；恢复启动引起的 Review 运行态变化按 15 区分。
 
@@ -126,13 +129,13 @@ API 密钥轮换：创建相同受限权限的新密钥 → 更新私有 env →
 
 | ID | 验收项 | 当前结果 |
 |---|---|---|
-| BK-01 | 文档、源卷/缓存/仓库隔离、凭据边界 | 配置与合成变量校验通过：已有外部源卷、只读挂载、无公开端口/认证凭据、缺 COS 密钥拒绝展开；真实 COS 权限仍待验证 |
+| BK-01 | 文档、源卷/缓存/仓库隔离、凭据边界 | 配置与合成变量校验通过：已有外部源卷、只读挂载、无公开端口/认证凭据、缺 COS 密钥拒绝展开；实际备份所需读写/清理权限已验证，完整 CAM/ACL 审计未执行 |
 | BK-02 | 真实只读挂载 SQLite 原生备份与摘要一致 | 已在云服务器运行独立容器：preview 源卷只读、输出临时内存盘、快照 600、schema 3 摘要一致、源库不变；仅空测试库 |
-| BK-03 | COS 桶私有、受限权限、仓库初始化 | 用户尚未创建桶 |
-| BK-04 | 真实加密上传、保留/check、成功标记 | 未执行 |
-| BK-05 | 读回全仓库、隔离恢复、数据库核对 | 未执行 |
-| BK-06 | 调度与至少两次执行、重启 | 未执行 |
-| BK-07 | 故障码与健康状态 | 既有模拟测试；真实故障待验收，无外部告警 |
+| BK-03 | COS 桶私有、受限权限、仓库初始化 | 仓库初始化成功、受限凭据完成备份/清理/读回；已存在 config 对象匿名访问返回 403。桶 ACL 和 CAM 关联策略未通过管理 API 全量审计 |
+| BK-04 | 真实加密上传、保留/check、成功标记 | 已通过；首份 e4b734ee，见 §11 |
+| BK-05 | 读回全仓库、隔离恢复、数据库核对 | 已通过；恢复快照与备份缓存中同一 SQLite 的 schema、完整性、外键、八表摘要和 generation 一致 |
+| BK-06 | 调度与至少两次执行、重启 | 两次初始作业与宿主机重启后第三次作业通过，服务 healthy；跨日连续调度仍待验收，见 §12 和 21 |
+| BK-07 | 故障码与健康状态 | 模拟测试通过；本次真实错误未产生成功备份，修复后重新执行通过；仍无外部告警 |
 | BK-08 | 正式学习库迁移后的备份恢复 | 未执行；当前只允许 preview 演练 |
 
 
@@ -144,3 +147,40 @@ API 密钥轮换：创建相同受限权限的新密钥 → 更新私有 env →
 - `node --import tsx --test tests/cloud.test.ts`：13/13 通过、无跳过，包括备份远端失败不清理、成功标记/保留参数的测试替身验证。这不代表 COS 真实验收。
 - `npm run format:check`、`npm run guide:check`、文档本地链接/表格/围栏及 `git diff --check` 通过。未变更业务逻辑或 backup-job.mts；未重跑业务 E2E 或重建当前服务器应用镜像，网页指南文字的本轮变更将随下一次应用构建部署。
 - 用户已确认尚未创建桶，已给出 §2 创建步骤。下一步等完整桶名和地域，再生成针对该桶的 CAM 策略、配置凭据和密码，执行 BK-03–BK-06。当前异地备份仍未开启，Mac 正式数据未受影响。
+
+
+## 10. 已确认桶与创建专用账号
+
+用户随后确认完整桶名 `phrasebud-storage-1257731701`、地域 `ap-singapore`。服务器私有模板写入该桶的 preview 仓库 URL，不覆盖已有不同仓库/地域配置，不改访问凭据、不初始化仓库或启动任务。
+
+已生成 [专用 CAM 策略 JSON](../deploy/cos-backup-policy.json)。桶级权限限于该桶的列举/定位/分块列表；对象读写/删除/分块操作限于 `phrasebud-preview/*` 与 `phrasebud-production/*`。没有桶删除、ACL 修改、全账号 COS 管理权限。JSON 解析与资源范围静态核对通过；仍须真实 CAM 创建、关联及备份请求验证才能确认生效。官方语法依据：[COS API 授权策略](https://cloud.tencent.com/document/practice/436/31923)。
+
+用户在 CAM 控制台操作：
+
+1. 访问管理 → 策略 → 新建自定义策略 → 按策略语法创建，选择空白模板；粘贴上述 JSON 全文，命名 `PhrasebudBackupCOS`。
+2. 访问管理 → 用户列表 → 新建用户 → 自定义创建，命名 `phrasebud-backup`，只启用编程/云 API 访问，关联 `PhrasebudBackupCOS` 策略。不要同时关联全量管理预设策略或继承高权限用户组。
+3. 在该子用户 API 密钥页创建并妥存 SecretId / SecretKey。SecretKey 仅创建时可保存，见 [官方密钥说明](https://cloud.tencent.cn/document/product/598/37140)。
+4. 在 Mac 项目根目录的 `.env.backup` 填写 `AWS_ACCESS_KEY_ID=子用户SecretId`、`AWS_SECRET_ACCESS_KEY=子用户SecretKey`。此本地文件已创建、权限 600、被 Git 忽略，仓库地址已填；密钥不发到聊天。保存后再经 SSH 安装服务器私有配置。
+5. 后续生成独立 restic 密码，并由用户另存密码管理器；受限密码文件不进入代码库。然后继续 §5–§6 的 init、加密上传、完整读回与隔离恢复；这些尚未执行。
+
+本次没有通过 API 登录云账号、读取密钥或改桶权限。Mac 正式学习数据和服务器业务数据未变更。
+
+
+## 11. 凭据就绪后的真实执行（2026-10-18）
+
+- Mac `.env.backup` 经完整性检查后，通过 SSH 安装服务器 `backup.env`，未输出密钥。独立随机 restic 密码生成于 Mac `/Users/Admin/.config/phrasebud-backup/restic-password`，并经 SSH 安装至服务器 `/home/ubuntu/.config/phrasebud-backup/restic-password`；目录 700、文件 600。用户仍须另存密码管理器/离线介质；这不是 COS SecretKey。
+- 默认 path 寻址初始化返回 `client.BucketExists: Access Denied`。相同密钥改用 dns 后可读取目标路径，确认未有仓库后初始化成功，仓库 ID 前缀 `28668bab13`。没有扩大 CAM 权限或公开桶。
+- 为兼容 COS，新增可选寻址参数，备份三个 restic 调用均传递；默认 auto，非法值拒绝执行 restic。专用备份镜像 `readwords:cos-backup-20261018` 由服务器既有 x86 镜像加更新脚本构建；运行中的网站镜像没有替换。代码仓库 Dockerfile 以后完整构建时也包含该脚本。
+- 19:04（Asia/Shanghai）首次作业输出 `READWORDS_BACKUP_OK`，快照 `e4b734ee`。`check --read-data` 读回 2/2 packs，结果 no errors。
+- 恢复至独立目录 `/home/ubuntu/readwords-restore-drill-20261018`。首次只读挂载的校验因 SQLite 侧文件无法创建而失败；改为隔离目录可写后通过。源学习卷始终只读挂载；比较对象为备份缓存和恢复目录中同一次一致性快照，没有拿已变化的实时库作基准。没有覆盖原数据库，没有设置业务维护开关。
+- 已存在的 `phrasebud-preview/config` 匿名请求返回 HTTP 403。此证据说明该对象不能匿名读取，不代替整个桶 ACL/CAM 配置审计。
+- 调度项目 `phrasebud-backup-preview` 已启动；周期为每次作业完成后间隔 86400 秒，使用原 preview 卷、独立缓存卷和独立远端前缀。19:06 启动作业再次输出 `READWORDS_BACKUP_OK`，当前快照 `c703195a`，备份服务和网站均为 healthy。两次均为真实执行，但第二次由启动触发，尚不证明跨日定时执行。按同日保留规则，首份演练快照 e4b734ee 已由第二次作业清理；恢复验收记录仍对应第一次，不能再用该 ID 执行新恢复。
+- 自检：全部 70 项测试通过、无跳过，包含寻址参数对 backup/forget/check 的传递和非法值拒绝；typecheck、format:check 通过。未改变业务页面或登录流程。
+- 本节完成时尚未完成：跨日连续运行、宿主机重启演练（后续已通过，见 §12）、外部失败通知、正式 Mac 数据迁移及迁移后的含内容恢复验收。不能将本轮标为全部运维完成。
+
+
+## 12. 宿主机重启后的备份复验
+
+按 [21 重启验收](21-服务器重启与持久化验收.md)，19:14:51 实际重启 Ubuntu，Docker 和备份容器自行恢复。19:15:11 再次自动备份成功，成功标记为 `2026-10-18T11:15:18.811Z`，COS 当前快照 `87acf61f`；网站/备份服务 healthy。未人工启动服务或重建容器。该次备份在维护冻结期间触发，恢复时可能仍处于维护状态，须隔离校验后明确解除维护。原 c703195a 可按同日保留规则被替换，不作为固定恢复入口。
+
+当前八张业务表均为空，持久化清单包含 schema、完整性、外键和 generation。此次通过不代替 Mac 正式库迁移后含内容恢复；跨日调度、外部通知仍未验收。

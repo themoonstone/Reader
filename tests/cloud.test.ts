@@ -687,6 +687,31 @@ test("Automated backup job reports remote failure without pruning; success recor
       ),
     );
     assert.ok(calls.some((args) => args[0] === "check"));
+    writeFileSync(log, "");
+    const dns = spawnSync(process.execPath, ["scripts/backup-job.mts"], {
+      env: { ...environment, READWORDS_RESTIC_S3_BUCKET_LOOKUP: "dns" },
+      encoding: "utf8",
+    });
+    assert.equal(dns.status, 0, dns.stderr);
+    const dnsCalls = readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.equal(dnsCalls.length, 3);
+    assert.deepEqual(
+      dnsCalls.map((args) => args.slice(0, 2)),
+      Array(3).fill(["-o", "s3.bucket-lookup=dns"]),
+    );
+    assert.deepEqual(
+      dnsCalls.map((args) => args[2]),
+      ["backup", "forget", "check"],
+    );
+    const invalid = spawnSync(process.execPath, ["scripts/backup-job.mts"], {
+      env: { ...environment, READWORDS_RESTIC_S3_BUCKET_LOOKUP: "invalid" },
+      encoding: "utf8",
+    });
+    assert.equal(invalid.status, 1);
+    assert.equal(readFileSync(log, "utf8").trim().split("\n").length, 3);
     const missing = spawnSync(process.execPath, ["scripts/backup-job.mts"], {
       env: { ...environment, RESTIC_REPOSITORY: "" },
       encoding: "utf8",
