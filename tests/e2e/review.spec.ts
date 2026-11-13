@@ -18,7 +18,7 @@ async function seed(page: Page) {
     const source = await call("sources", {
       id: crypto.randomUUID(),
       type: "Reading",
-      title: "Review E2E",
+      title: `Review E2E ${crypto.randomUUID()}`,
     });
     const ids: string[] = [];
     for (let i = 0; i < 3; i++) {

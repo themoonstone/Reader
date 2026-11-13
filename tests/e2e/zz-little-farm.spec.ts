@@ -1,3 +1,4 @@
+import { selectAllSheets } from "./helpers/excel-selection";
 import { test, expect } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -29,6 +30,7 @@ test("Our Little Farm detection, P1 import and metadata preserve the existing bo
   });
   await page.getByRole("button", { name: "导入 Excel", exact: true }).click();
   await page.getByLabel("上传 Excel 文件", { exact: true }).setInputFiles(file);
+  await selectAllSheets(page);
   await expect(
     page.getByText("已识别：Our Little Farm 章节词汇表", { exact: true }),
   ).toBeVisible();
@@ -64,6 +66,7 @@ test("Our Little Farm detection, P1 import and metadata preserve the existing bo
     path: testInfo.outputPath("farm-preview.png"),
     fullPage: false,
   });
+  await page.getByRole("button", { name: "对比本次导入", exact: true }).click();
   await page.getByRole("checkbox", { name: /我已确认所选分组/ }).check();
   await commit.click();
   await expect(

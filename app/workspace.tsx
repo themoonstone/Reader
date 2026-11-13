@@ -3,8 +3,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, displayDate } from "@/lib/client";
 import {
   sourceTypes,
-  reasonLabels,
-  eventLabels,
   type Source,
   type Draft,
   type Expression,
@@ -16,6 +14,16 @@ import ReviewPage, { ReviewDetail } from "./review";
 import Account from "./account";
 import BackupSettings from "./backup-settings";
 import ExcelImporter from "./excel-importer";
+import SourceMerge from "./source-merge";
+import ContextCard from "./context-card";
+import BookFlashcardPage from "./book-flashcards";
+import {
+  readBrowse,
+  listParams,
+  browseIds,
+  browseNeighbor,
+  type BrowseContext,
+} from "@/lib/browse";
 
 const symbols: Record<string, string> = {
   Reading: "▤",
@@ -29,6 +37,9 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [expressions, setExpressions] = useState<Expression[]>([]);
   const [detail, setDetail] = useState<Expression | null>(null);
+  const primaryContext = detail?.contexts.find((c) => c.data.sentence.trim());
+  const otherContexts =
+    detail?.contexts.filter((c) => c.id !== primaryContext?.id) || [];
   const [draft, setDraft] = useState<Draft | null>(null);
   const [type, setType] = useState("");
   const [query, setQuery] = useState("");
@@ -37,43 +48,125 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
   const [showIgnored, setShowIgnored] = useState(false);
   const [capture, setCapture] = useState(false);
   const [sourceModal, setSourceModal] = useState<Source | "new" | null>(null);
+  const [mergeSource, setMergeSource] = useState<Source | "choose" | null>(
+    null,
+  );
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
+  const [supportingReady, setSupportingReady] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [browse, setBrowse] = useState<BrowseContext | null>(null);
+  const [loadedListKey, setLoadedListKey] = useState("");
+  const [browseLive, setBrowseLive] = useState<{
+    key: string;
+    ids: string[];
+    error: string;
+  } | null>(null);
+  const restoreList = useRef<BrowseContext | null>(null);
+  const renderedRoute = useRef("library");
+  const listKey = JSON.stringify([
+    view,
+    listParams(view, query, type, priority, archived),
+    revision,
+  ]);
+  const browseKey =
+    view.startsWith("expression/") && browse
+      ? JSON.stringify([
+          browse.origin,
+          listParams(
+            browse.origin,
+            browse.query,
+            browse.type,
+            browse.priority,
+            browse.archived,
+          ),
+          browse.ids,
+        ])
+      : "";
+  const currentId = view.startsWith("expression/") ? view.slice(11) : "";
+  const liveReady =
+    !!browseKey &&
+    browseLive?.key === `${browseKey}:${currentId}:${revision}` &&
+    !browseLive.error;
+  const liveIds = liveReady ? browseLive!.ids : [];
+  const sequence = browse ? browseIds(browse, liveIds) : [];
+  const previousId =
+    browse && liveReady
+      ? browseNeighbor(browse, liveIds, currentId, -1)
+      : undefined;
+  const nextId =
+    browse && liveReady
+      ? browseNeighbor(browse, liveIds, currentId, 1)
+      : undefined;
   const dirty = useRef(false);
   const onDirty = useCallback((v: boolean) => {
     dirty.current = v;
   }, []);
   const refresh = () => setRevision((r) => r + 1);
-  const navigate = (next: string) => {
+  const navigate = (next: string, context: BrowseContext | null = null) => {
     if (
       dirty.current &&
       !window.confirm("草稿尚未保存，确定离开？可先保存草稿或复制当前输入。")
     )
       return;
     dirty.current = false;
-    window.location.hash = next;
+    if (window.location.hash !== `#${next}`) window.location.hash = next;
+    window.history.replaceState(
+      { ...window.history.state, readwordsBrowse: context },
+      "",
+    );
+    window.dispatchEvent(new Event("readwords-navigate"));
   };
   useEffect(() => {
     let previous = window.location.hash || "#library";
+    let previousState = window.history.state;
+    const scrollMode = window.history.scrollRestoration;
+    window.history.scrollRestoration = "manual";
     const read = () => {
       if (
         dirty.current &&
         !window.confirm("草稿尚未保存，确定离开？可先保存或复制当前输入。")
       ) {
-        window.history.replaceState(null, "", previous);
+        window.history.replaceState(previousState, "", previous);
         return;
       }
       dirty.current = false;
       previous = window.location.hash || "#library";
-      setView(previous.slice(1));
-      setType("");
+      previousState = window.history.state;
+      const next = previous.slice(1);
+      const stored = readBrowse(window.history.state?.readwordsBrowse);
+      const context =
+        stored &&
+        (next === stored.origin || next === `expression/${stored.anchor}`)
+          ? stored
+          : null;
+      setBrowse(context);
+      restoreList.current = context && next === context.origin ? context : null;
+      if (context) {
+        setQuery(context.query);
+        setType(context.type);
+        setPriority(context.priority);
+        setArchived(context.archived);
+      } else {
+        setType("");
+      }
+      // Do not mount a new route briefly before its loading effect starts:
+      // an early file selection or form input would otherwise be discarded.
+      if (renderedRoute.current !== next) setLoading(true);
+      renderedRoute.current = next;
+      setView(next);
+      if (!restoreList.current) window.scrollTo(0, 0);
       setError("");
     };
     read();
     window.addEventListener("hashchange", read);
-    return () => window.removeEventListener("hashchange", read);
+    window.addEventListener("readwords-navigate", read);
+    return () => {
+      window.removeEventListener("hashchange", read);
+      window.removeEventListener("readwords-navigate", read);
+      window.history.scrollRestoration = scrollMode;
+    };
   }, []);
   useEffect(() => {
     let active = true;
@@ -81,22 +174,33 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
     setError("");
     setDetail(null);
     setDraft(null);
-    const load = async () => {
-      const [s, d] = await Promise.all([
-        api<Source[]>("sources"),
-        api<Draft[]>("drafts"),
-      ]);
+    setSupportingReady(false);
+    const reportError = (e: unknown) => {
+      if (active) setError((e as Error).message);
+    };
+    const supporting = Promise.all([
+      api<Source[]>("sources"),
+      api<Draft[]>("drafts"),
+    ]).then(([s, d]) => {
       if (!active) return;
       setSources(s);
       setDrafts(d);
-      if (view.startsWith("draft/")) {
-        const item = await api<Draft>(`drafts/${view.split("/")[1]}`);
-        if (active) setDraft(item);
-      }
+      setSupportingReady(true);
+    });
+    const load = async () => {
       if (view.startsWith("expression/")) {
+        // The current expression is independent of the source/Inbox refresh.
+        // Attach the background error handler before awaiting the primary request.
+        void supporting.catch(reportError);
         const item = await api<Expression>(`expressions/${view.split("/")[1]}`);
         if (active) setDetail(item);
+        return;
       }
+      const item = view.startsWith("draft/")
+        ? api<Draft>(`drafts/${view.split("/")[1]}`)
+        : Promise.resolve(null);
+      const [, currentDraft] = await Promise.all([supporting, item]);
+      if (active && currentDraft) setDraft(currentDraft);
     };
     load()
       .catch((e) => {
@@ -112,18 +216,16 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
   useEffect(() => {
     if (view !== "search" && !view.startsWith("source/")) return;
     let active = true;
-    const params = new URLSearchParams({
-      q: query,
-      type,
-      priority,
-      archived: archived ? "1" : "0",
-      sourceId: view.startsWith("source/") ? view.split("/")[1] : "",
-    });
+    setLoadedListKey("");
+    const params = listParams(view, query, type, priority, archived);
     const timer = setTimeout(
       () =>
         api<Expression[]>(`expressions?${params}`)
           .then((result) => {
-            if (active) setExpressions(result);
+            if (active) {
+              setExpressions(result);
+              setLoadedListKey(listKey);
+            }
           })
           .catch((e) => {
             if (active) setError((e as Error).message);
@@ -134,11 +236,69 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
       active = false;
       clearTimeout(timer);
     };
-  }, [view, query, type, priority, archived, revision]);
+  }, [view, query, type, priority, archived, revision, listKey]);
+  useEffect(() => {
+    if (!browseKey) return;
+    let active = true;
+    const [, params] = JSON.parse(browseKey) as [string, string];
+    api<string[]>(`expressions?${params}&idsOnly=1`)
+      .then((items) => {
+        if (active)
+          setBrowseLive({
+            key: `${browseKey}:${currentId}:${revision}`,
+            ids: items,
+            error: "",
+          });
+      })
+      .catch((e: Error) => {
+        if (active)
+          setBrowseLive({
+            key: `${browseKey}:${currentId}:${revision}`,
+            ids: [],
+            error: e.message,
+          });
+      });
+    return () => {
+      active = false;
+    };
+  }, [browseKey, currentId, revision]);
+  useEffect(() => {
+    const context = restoreList.current;
+    if (
+      !context ||
+      loading ||
+      loadedListKey !== listKey ||
+      view !== context.origin
+    )
+      return;
+    const frame = requestAnimationFrame(() => {
+      const ids = expressions.map((e) => e.id);
+      const anchor = ids.includes(context.anchor)
+        ? context.anchor
+        : browseNeighbor(context, ids, context.anchor, 1) ||
+          browseNeighbor(context, ids, context.anchor, -1);
+      const element = anchor
+        ? document.querySelector<HTMLButtonElement>(
+            `[data-expression-id="${anchor}"]`,
+          )
+        : null;
+      if (element) {
+        element.focus({ preventScroll: true });
+        element.scrollIntoView({ block: "center" });
+      } else window.scrollTo(0, context.scrollY);
+      restoreList.current = null;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [view, loading, loadedListKey, listKey, expressions]);
   useEffect(() => {
     if (!cloud) return;
     const foreground = () => {
-      if (document.hidden || view === "review") return;
+      if (
+        document.hidden ||
+        view === "review" ||
+        view.startsWith("flashcards/")
+      )
+        return;
       if (dirty.current || capture || sourceModal || view === "import") {
         setNotice("其他设备的数据可能已变化；当前输入保留，保存后再刷新。");
         return;
@@ -155,12 +315,14 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
     : undefined;
   const section = view.split("/")[0];
   const navActive =
-    section === "source" || section === "import"
+    section === "source" || section === "import" || section === "flashcards"
       ? "library"
       : section === "draft"
         ? "inbox"
         : section === "expression"
-          ? "search"
+          ? browse?.origin.startsWith("source/")
+            ? "library"
+            : "search"
           : section;
   const sourceList = sources.filter(
     (s) =>
@@ -175,7 +337,25 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
             className="expression-card"
             key={e.id}
             aria-label={`查看表达 ${e.term} · ${e.meaning}`}
-            onClick={() => navigate(`expression/${e.id}`)}
+            data-expression-id={e.id}
+            onClick={() => {
+              const context: BrowseContext = {
+                version: 1,
+                origin: view,
+                query,
+                type: type as BrowseContext["type"],
+                priority: priority as BrowseContext["priority"],
+                archived,
+                ids: items.map((item) => item.id),
+                anchor: e.id,
+                scrollY: window.scrollY,
+              };
+              window.history.replaceState(
+                { ...window.history.state, readwordsBrowse: context },
+                "",
+              );
+              navigate(`expression/${e.id}`, context);
+            }}
           >
             <div>
               <span className={`badge ${e.priority.toLowerCase()}`}>
@@ -313,6 +493,74 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
               重新连接 / 重试
             </button>
           )}
+          {currentId && (
+            <nav className="detail-browse" aria-label="表达连续浏览">
+              <button
+                className="text-button back"
+                onClick={() => navigate(browse?.origin || "search", browse)}
+              >
+                {browse
+                  ? browse.origin === "search"
+                    ? "← 返回搜索结果"
+                    : "← 返回来源列表"
+                  : "← 返回表达库"}
+              </button>
+              {browse ? (
+                <>
+                  <span className="muted" role="status">
+                    {!liveReady
+                      ? browseLive?.key ===
+                          `${browseKey}:${currentId}:${revision}` &&
+                        browseLive.error
+                        ? "浏览列表核对失败，请重试"
+                        : "正在核对浏览列表…"
+                      : sequence.includes(currentId)
+                        ? `第 ${sequence.indexOf(currentId) + 1} / ${sequence.length} 条 · ${browse.origin === "search" ? "搜索结果" : "当前来源"}`
+                        : "当前表达已不在结果中"}
+                  </span>
+                  <div className="actions">
+                    <button
+                      className="secondary"
+                      disabled={loading || !previousId}
+                      onClick={() =>
+                        previousId &&
+                        navigate(`expression/${previousId}`, {
+                          ...browse,
+                          anchor: previousId,
+                        })
+                      }
+                    >
+                      ← 上一条
+                    </button>
+                    <button
+                      className="secondary"
+                      disabled={loading || !nextId}
+                      onClick={() =>
+                        nextId &&
+                        navigate(`expression/${nextId}`, {
+                          ...browse,
+                          anchor: nextId,
+                        })
+                      }
+                    >
+                      下一条 →
+                    </button>
+                    {browseLive?.key ===
+                      `${browseKey}:${currentId}:${revision}` &&
+                      browseLive.error && (
+                        <button className="text-button" onClick={refresh}>
+                          重试浏览列表
+                        </button>
+                      )}
+                  </div>
+                </>
+              ) : (
+                <span className="muted">
+                  从来源或搜索列表进入，可使用上一条 / 下一条。
+                </span>
+              )}
+            </nav>
+          )}
           {loading ? (
             <div className="empty" role="status">
               正在读取工作空间…
@@ -334,6 +582,15 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
                       ＋ 新建来源
                     </button>
                   </div>
+                  {sources.filter((s) => s.lifecycle === "active").length >
+                    1 && (
+                    <button
+                      className="text-button"
+                      onClick={() => setMergeSource("choose")}
+                    >
+                      合并来源
+                    </button>
+                  )}
                   <section className="library-banner">
                     <div>
                       <span className="eyebrow">CONTEXT FIRST</span>
@@ -558,12 +815,24 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
                       </p>
                     </div>
                     {activeSource && (
-                      <button
-                        className="secondary"
-                        onClick={() => setCapture(true)}
-                      >
-                        ＋ 从这里记录
-                      </button>
+                      <div className="actions wrap">
+                        {activeSource.type === "Reading" &&
+                          activeSource.lifecycle === "active" && (
+                            <button
+                              onClick={() =>
+                                navigate(`flashcards/${activeSource.id}`)
+                              }
+                            >
+                              翻本书闪卡
+                            </button>
+                          )}
+                        <button
+                          className="secondary"
+                          onClick={() => setCapture(true)}
+                        >
+                          ＋ 从这里记录
+                        </button>
+                      </div>
                     )}
                   </div>
                   <div className="search-toolbar">
@@ -590,7 +859,11 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
                     </select>
                   </div>
                   <div className="section-bar">
-                    <span className="muted">{expressions.length} 个表达</span>
+                    <span className="muted">
+                      {loadedListKey === listKey
+                        ? `${expressions.length} 个表达`
+                        : "正在筛选…"}
+                    </span>
                     <label className="check">
                       <input
                         type="checkbox"
@@ -600,17 +873,15 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
                       包含归档表达
                     </label>
                   </div>
-                  {cards(expressions)}
+                  {loadedListKey === listKey ? (
+                    cards(expressions)
+                  ) : (
+                    <p role="status">正在读取表达列表…</p>
+                  )}
                 </>
               )}
-              {view.startsWith("expression/") && detail && (
+              {view.startsWith("expression/") && detail?.id === currentId && (
                 <>
-                  <button
-                    className="text-button back"
-                    onClick={() => navigate("search")}
-                  >
-                    ← 返回表达库
-                  </button>
                   <div className="page-heading">
                     <div>
                       <div className="actions">
@@ -627,25 +898,72 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
                         <p>简单替换：{detail.alternative}</p>
                       )}
                     </div>
-                    <button
-                      className="secondary"
-                      onClick={() => setCapture(true)}
-                    >
-                      ＋ 再次记录
-                    </button>
                   </div>
+                  <section aria-label="原文与出处" className="detail-contexts">
+                    <div className="section-bar">
+                      <h2>原文与出处</h2>
+                      <span className="muted">最近记录的有原句语境</span>
+                    </div>
+                    {primaryContext ? (
+                      <ContextCard
+                        context={primaryContext}
+                        term={detail.term}
+                      />
+                    ) : (
+                      <p className="panel muted">
+                        尚未提供原句，可在下方“编辑语境 /
+                        归属”中补充。学习改写和改进句不作为原文。
+                      </p>
+                    )}
+                  </section>
+                  {otherContexts.length > 0 && (
+                    <section
+                      aria-label="其他真实接触"
+                      className="detail-contexts"
+                    >
+                      <div className="section-bar">
+                        <h2>其他真实接触</h2>
+                        <span className="muted">保留每次接触的语境</span>
+                      </div>
+                      <div className="timeline">
+                        {otherContexts.map((c) => (
+                          <ContextCard
+                            context={c}
+                            term={detail.term}
+                            key={c.id}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                  <button
+                    className="secondary"
+                    onClick={() => setCapture(true)}
+                  >
+                    ＋ 再次记录
+                  </button>
                   <ReviewDetail expression={detail} />
                   {detail.lifecycle !== "deleted" ? (
-                    <Maintenance
-                      expression={detail}
-                      sources={sources}
-                      onDirty={onDirty}
-                      onDone={(id) => {
-                        setNotice("已保存维护操作。");
-                        refresh();
-                        navigate(id ? `expression/${id}` : "search");
-                      }}
-                    />
+                    supportingReady ? (
+                      <Maintenance
+                        expression={detail}
+                        sources={sources}
+                        onDirty={onDirty}
+                        onDone={(id) => {
+                          setNotice("已保存维护操作。");
+                          refresh();
+                          if (id === detail.id)
+                            navigate(`expression/${id}`, browse);
+                          else navigate(browse?.origin || "search", browse);
+                        }}
+                      />
+                    ) : (
+                      <section className="panel" role="status">
+                        {error
+                          ? "来源信息读取失败，请重试后编辑。"
+                          : "正在读取来源信息，稍后可编辑…"}
+                      </section>
+                    )
                   ) : (
                     <section className="panel">
                       <p>此表达已在回收站，请到设置恢复。</p>
@@ -667,170 +985,25 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
                       </div>
                     ))}
                   </div>
-                  <div className="section-bar">
-                    <h2>每一次真实接触</h2>
-                    <span className="muted">次数来自你的记录</span>
-                  </div>
-                  <div className="timeline">
-                    {detail.contexts.map((c) => (
-                      <article className="context-card" key={c.id}>
-                        <div className="section-bar">
-                          <div>
-                            <span
-                              className={`tag ${c.sourceType.toLowerCase()}`}
-                            >
-                              {c.sourceType}
-                            </span>
-                            <strong>{c.sourceTitle}</strong>
-                          </div>
-                          <span className="muted">
-                            {eventLabels[c.data.eventKind]}
-                          </span>
-                        </div>
-                        <div className="context-position">
-                          {[
-                            c.data.chapter,
-                            c.data.page ? `p. ${c.data.page}` : "",
-                            c.data.timestamp,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ") || "位置未提供"}
-                          　·　
-                          {c.data.occurredOn
-                            ? `接触日期 ${c.data.occurredOn}`
-                            : `记录于 ${displayDate(c.createdAt)}`}
-                        </div>
-                        {c.data.sentence ? (
-                          <blockquote>{c.data.sentence}</blockquote>
-                        ) : (
-                          <p className="muted">未提供原句</p>
-                        )}
-                        <p>
-                          <span className="muted">
-                            {c.data.importMetadata
-                              ? "英文语境释义　"
-                              : "语境释义　"}
-                          </span>
-                          {c.data.meaning}
-                        </p>
-                        {c.data.importMetadata && (
-                          <details className="import-provenance">
-                            <summary>
-                              Excel 导入信息 · {c.data.importMetadata.sheet} 第{" "}
-                              {c.data.importMetadata.row} 行
-                            </summary>
-                            <p>文件：{c.data.importMetadata.fileName}</p>
-                            <p>
-                              {c.data.importMetadata.profile ===
-                              "little-farm-v1"
-                                ? "原表中文释义："
-                                : "词典中文义项："}
-                              {c.data.importMetadata.dictionaryChinese}
-                            </p>
-                            <p>
-                              {c.data.importMetadata.profile ===
-                              "little-farm-v1"
-                                ? "核心英文释义："
-                                : "词典英文解释："}
-                              {c.data.importMetadata.dictionaryEnglish}
-                            </p>
-                            <p>
-                              音标（原表记录）：
-                              {c.data.importMetadata.ipa || "未提供"} · 词性：
-                              {c.data.importMetadata.partOfSpeech}
-                            </p>
-                            {c.data.importMetadata.profile ===
-                              "little-farm-v1" && (
-                              <>
-                                <p>
-                                  原表来源标记 / 页码：
-                                  {c.data.importMetadata.rawSourceLocation ||
-                                    "未提供"}
-                                </p>
-                                <p>
-                                  简单英文释义 / 学习改写：
-                                  {c.data.importMetadata.simpleParaphrase ||
-                                    "未提供"}
-                                </p>
-                                <p>
-                                  原表片段按一行记录一次遇见，不按页码数量叠加。
-                                </p>
-                              </>
-                            )}
-                            {c.data.importMetadata.learningTarget && (
-                              <p>
-                                复习目标或搭配：
-                                {c.data.importMetadata.learningTarget}
-                              </p>
-                            )}
-                            <p>
-                              {c.data.importMetadata.profile ===
-                              "little-farm-v1"
-                                ? "学习理由："
-                                : "严格等级理由："}
-                              {c.data.importMetadata.rationale}
-                            </p>
-                            <p>
-                              原等级：
-                              {c.data.importMetadata.originalPriority ||
-                                "未提供"}
-                              {c.data.importMetadata.bookCount && (
-                                <>
-                                  {" "}
-                                  · 原表出现次数：
-                                  {c.data.importMetadata.bookCount}（不重复计入
-                                  Seen）
-                                </>
-                              )}
-                            </p>
-                            {c.data.importMetadata.priorityConflict && (
-                              <p>其他明细含不同等级，本次仅导入严格 P1。</p>
-                            )}
-                            {c.data.importMetadata.excerpt && (
-                              <p>上下文为原表节选，未补写。</p>
-                            )}
-                          </details>
-                        )}
-                        {c.data.eventKind === "output_corrected" && (
-                          <div className="correction">
-                            <p>
-                              <span>原表达</span>
-                              {c.data.originalExpression}
-                            </p>
-                            <p>
-                              <span>改进表达</span>
-                              {c.data.correctedExpression}
-                            </p>
-                            {c.data.correctedSentence && (
-                              <blockquote>
-                                {c.data.correctedSentence}
-                              </blockquote>
-                            )}
-                          </div>
-                        )}
-                        {c.data.intendedMeaning && (
-                          <p>想表达：{c.data.intendedMeaning}</p>
-                        )}
-                        {c.data.misheard && <p>误听：{c.data.misheard}</p>}
-                        <footer className="context-reason">
-                          <span>
-                            Why saved · {reasonLabels[c.data.whySaved]}
-                            {c.data.importMetadata ? "（导入默认）" : ""}
-                          </span>
-                          {c.data.note && <p>{c.data.note}</p>}
-                        </footer>
-                      </article>
-                    ))}
-                  </div>
                 </>
               )}
               {view === "review" && <ReviewPage sources={sources} />}
+              {view.startsWith("flashcards/") && (
+                <BookFlashcardPage
+                  key={view}
+                  sourceId={view.slice("flashcards/".length)}
+                  onBack={() =>
+                    navigate(`source/${view.slice("flashcards/".length)}`)
+                  }
+                />
+              )}
               {view === "import" && (
                 <ExcelImporter
                   sources={sources}
-                  onDone={(id) => {
+                  onDirty={onDirty}
+                  onDone={(id, priority) => {
                     setQuery("");
-                    setPriority("P1");
+                    setPriority(priority);
                     refresh();
                     navigate(`source/${id}`);
                   }}
@@ -885,6 +1058,21 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
           <span>Context before definition. One expression at a time.</span>
         </footer>
       </main>
+      {mergeSource && (
+        <SourceMerge
+          sources={sources}
+          initial={mergeSource === "choose" ? undefined : mergeSource}
+          onClose={() => setMergeSource(null)}
+          onDone={() => {
+            setMergeSource(null);
+            setNotice(
+              "来源合并完成，原来源已归档；操作前快照可在备份与恢复下载。",
+            );
+            refresh();
+            navigate("library");
+          }}
+        />
+      )}
       {sourceModal && (
         <Modal
           title={sourceModal === "new" ? "新建语料来源" : "编辑来源"}
@@ -899,6 +1087,17 @@ export default function Workspace({ cloud = false }: { cloud?: boolean }) {
               refresh();
             }}
           />
+          {sourceModal !== "new" && sourceModal.lifecycle === "active" && (
+            <button
+              className="secondary"
+              onClick={() => {
+                setMergeSource(sourceModal);
+                setSourceModal(null);
+              }}
+            >
+              将此来源合并到…
+            </button>
+          )}
           {sourceModal !== "new" && (
             <button
               className="text-button archive-button"

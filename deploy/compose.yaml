@@ -1,7 +1,7 @@
 name: readwords
 services:
   app:
-    image: readwords:local
+    image: ${READWORDS_IMAGE:-readwords:local}
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -35,7 +35,7 @@ services:
       app:
         condition: service_healthy
   backup:
-    image: readwords:local
+    image: ${READWORDS_BACKUP_IMAGE:-readwords:local}
     restart: unless-stopped
     init: true
     entrypoint: ["/bin/sh", "-c"]

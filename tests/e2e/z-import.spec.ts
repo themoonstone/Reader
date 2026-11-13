@@ -1,3 +1,4 @@
+import { selectAllSheets } from "./helpers/excel-selection";
 import { test, expect } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -14,6 +15,7 @@ test("upload real workbook, preview only strict P1, explicitly confirm and inspe
   await page.goto("/");
   await page.getByRole("button", { name: "导入 Excel", exact: true }).click();
   await page.getByLabel("上传 Excel 文件", { exact: true }).setInputFiles(file);
+  await selectAllSheets(page);
   await expect(
     page.getByRole("status").filter({ hasText: "章节明细 1098 行" }),
   ).toBeVisible();
@@ -44,6 +46,7 @@ test("upload real workbook, preview only strict P1, explicitly confirm and inspe
     path: testInfo.outputPath("p1-import-preview.png"),
     fullPage: false,
   });
+  await page.getByRole("button", { name: "对比本次导入", exact: true }).click();
   await page.getByRole("checkbox", { name: /我已确认所选分组/ }).check();
   await commit.click();
   await expect(
@@ -58,7 +61,7 @@ test("upload real workbook, preview only strict P1, explicitly confirm and inspe
     page.getByRole("heading", { name: "Bringing Up Bébé", exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("筛选学习优先级", { exact: true })).toHaveValue(
-    "P1",
+    "",
   );
   await expect(page.getByText("112 个表达", { exact: true })).toBeVisible();
   await page

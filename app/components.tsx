@@ -8,9 +8,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api, localDate } from "@/lib/client";
+import { api, localDate, RequestError } from "@/lib/client";
 import {
   sourceTypes,
+  normalize,
   emptyDraft,
   type DraftInput,
   type Source,
@@ -140,36 +141,95 @@ export function SourceForm({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const set = (key: keyof SourceInput, value: unknown) =>
+  const [matches, setMatches] = useState<Source[]>([]);
+  const set = (key: keyof SourceInput, value: unknown) => {
+    setMatches([]);
     setData((d) => ({ ...d, [key]: value }));
+  };
+  async function save(allowSameName = false) {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api<Source>(
+        source ? `sources/${source.id}` : "sources",
+        source ? "PATCH" : "POST",
+        source
+          ? { data, version: source.version, allowSameName }
+          : { ...data, allowSameName },
+      );
+      onSaved(result);
+    } catch (e) {
+      setError((e as Error).message);
+      if (e instanceof RequestError && e.code === "SOURCE_EXISTS") {
+        try {
+          const all = await api<Source[]>("sources");
+          setMatches(
+            all.filter(
+              (s) =>
+                s.id !== source?.id &&
+                s.type === data.type &&
+                normalize(s.title) === normalize(data.title),
+            ),
+          );
+        } catch (loadError) {
+          setError((loadError as Error).message);
+        }
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <form
-      onSubmit={async (e) => {
+      onSubmit={(e) => {
         e.preventDefault();
-        if (busy) return;
-        setBusy(true);
-        setError("");
-        try {
-          const result = await api<Source>(
-            source ? `sources/${source.id}` : "sources",
-            source ? "PATCH" : "POST",
-            source ? { data, version: source.version } : data,
-          );
-          onSaved(result);
-        } catch (e) {
-          setError((e as Error).message);
-        } finally {
-          setBusy(false);
-        }
+        void save();
       }}
     >
       <ErrorBox error={error} />
+      {matches.length > 0 && (
+        <section className="notice" aria-label="同名来源提示">
+          <p>已有同名来源。请核对作者、日期，选择复用或保留独立来源。</p>
+          {matches.map((s) => (
+            <div key={s.id}>
+              <p>
+                {s.title} · {s.author || "作者未填写"} ·{" "}
+                {s.date || "日期未填写"} · {s.expressionCount} 个表达
+                {s.lifecycle !== "active" ? " · 已归档，请先恢复" : ""}
+              </p>
+              {!source && (
+                <button
+                  type="button"
+                  disabled={busy || s.lifecycle !== "active"}
+                  onClick={() => onSaved(s)}
+                >
+                  使用已有来源
+                </button>
+              )}
+            </div>
+          ))}
+          {source && (
+            <p>已有数据不会因改名而合并，请返回 Library 使用合并来源。</p>
+          )}
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy}
+            onClick={() => void save(true)}
+          >
+            {source ? "仍然保存同名" : "仍然新建独立同名来源"}
+          </button>
+        </section>
+      )}
+
       <div className="form-grid">
         <Field label="来源类型">
           <select
             value={data.type}
             disabled={!!source || busy}
             onChange={(e) => {
+              setMatches([]);
               const type = e.target.value as SourceInput["type"];
               setData((d) => ({
                 ...d,

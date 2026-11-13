@@ -733,8 +733,9 @@ export class Review {
       if (after.state === "ended")
         return this.view(s.id, "本轮时间已到，未保存反馈");
       const e = this.entry(c.entry_id),
-        next = reviewInterval(e.stage, b.result, this.at()),
-        now = this.now();
+        at = this.at(),
+        next = reviewInterval(e.stage, b.result, at),
+        now = new Date(at).toISOString();
       this.store.db
         .prepare(
           "INSERT INTO review_records VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",

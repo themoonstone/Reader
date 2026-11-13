@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { workbookFile } from "../fixtures/sheet-workbooks";
 test("Signed-in mobile workspace keeps account, navigation and dialogs usable without horizontal overflow", async ({
   page,
 }, testInfo) => {
@@ -95,6 +96,52 @@ test("Signed-in mobile workspace keeps account, navigation and dialogs usable wi
   await expect(
     page.getByRole("heading", { name: "Mobile layout test", exact: true }),
   ).toBeVisible();
+  // Cloud foreground notifications must preserve the new import's file/range/confirmation.
+  await page.getByRole("button", { name: "导入 Excel", exact: true }).click();
+  await page.getByLabel("上传 Excel 文件", { exact: true }).setInputFiles({
+    name: "cloud-sheets.xlsx",
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: await workbookFile(),
+  });
+  const picker = page.getByRole("region", { name: "选择工作表", exact: true });
+  await expect(picker).toBeVisible();
+  await page.getByLabel("选择工作表 Chapter 8", { exact: true }).check();
+  await page.route("**/api/imports/preview", (route) => route.abort());
+  await picker
+    .getByRole("button", { name: "检查所选内容", exact: true })
+    .click();
+  await expect(page.locator(".error[role=alert]")).toContainText("无法连接");
+  await expect(
+    page.getByLabel("选择工作表 Chapter 8", { exact: true }),
+  ).toBeChecked();
+  await page.unroute("**/api/imports/preview");
+  await picker
+    .getByRole("button", { name: "检查所选内容", exact: true })
+    .click();
+  await page.getByRole("button", { name: "对比本次导入", exact: true }).click();
+  await page.getByRole("checkbox", { name: /我已确认所选分组/ }).check();
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      value: false,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(
+    page.getByRole("status").filter({ hasText: "其他设备的数据可能已变化" }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("选择工作表 Chapter 8", { exact: true }),
+  ).toBeChecked();
+  await expect(
+    page.getByRole("checkbox", { name: /我已确认所选分组/ }),
+  ).toBeChecked();
+  page.once("dialog", (d) => d.accept());
+  await nav.getByRole("button", { name: /Library/ }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toContainText(
+    "每一种遇见",
+  );
   await logout.click();
   await expect(page).toHaveURL(/\/login$/);
   expect((await page.request.get("/api/sources")).status()).toBe(401);

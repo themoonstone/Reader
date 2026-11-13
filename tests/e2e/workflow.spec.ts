@@ -42,9 +42,7 @@ test("Source → capture → autosaved Inbox → save → search → refresh det
     "专门腾出时间",
   );
   await page.getByRole("button", { name: "确认入库 →", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "每一次真实接触" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "原文与出处" })).toBeVisible();
   await expect(
     page.getByText("I carve out some time every morning.", { exact: true }),
   ).toBeVisible();
@@ -64,10 +62,13 @@ test("Source → capture → autosaved Inbox → save → search → refresh det
   await expect(
     page.getByRole("heading", { name: "carve out", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: /查看表达 carve out/ }).click();
-  await expect(
-    page.getByRole("heading", { name: "每一次真实接触" }),
-  ).toBeVisible();
+  await page
+    .getByRole("button", {
+      name: "查看表达 carve out · 专门腾出时间",
+      exact: true,
+    })
+    .click();
+  await expect(page.getByRole("heading", { name: "原文与出处" })).toBeVisible();
   expect(errors).toEqual([]);
 });
 

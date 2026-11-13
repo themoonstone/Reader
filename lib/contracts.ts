@@ -97,7 +97,14 @@ export const draftSchema = z.object({
   targetSurface: text(200).default(""),
   importMetadata: z
     .object({
-      profile: z.enum(["bebe-strict-v1", "little-farm-v1"]),
+      profile: z.enum(["bebe-strict-v1", "little-farm-v1", "phrasebud-v1"]),
+      verificationStatus: z
+        .enum(["已核对完整句", "已核对节选", "待核对", "待补充"])
+        .optional(),
+      highlightOccurrence: z.number().int().min(1).max(99).optional(),
+      example: text(3000).optional(),
+      exampleChinese: text(3000).optional(),
+      exampleSource: text(500).optional(),
       sourceMark: text(500).optional(),
       rawSourceLocation: text(500).optional(),
       simpleParaphrase: text(3000).optional(),

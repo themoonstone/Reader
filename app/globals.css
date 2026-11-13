@@ -972,6 +972,9 @@ main {
   display: grid;
   gap: 20px;
 }
+.detail-contexts {
+  margin-bottom: 28px;
+}
 .context-card {
   padding: 26px;
   background: white;
@@ -1789,4 +1792,124 @@ dialog .type-tabs button {
   .account [role="alert"] {
     flex-basis: 100%;
   }
+}
+
+mark.learning-target {
+  background: #eee1a9;
+  color: #4c354f;
+  border-radius: 3px;
+  padding: 0 0.08em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.context-card mark.learning-target strong {
+  font: inherit;
+  font-weight: 700;
+}
+
+.detail-browse {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  padding: 12px 0 20px;
+  margin-bottom: 12px;
+}
+.detail-browse .back {
+  margin: 0;
+}
+.detail-browse .actions {
+  flex-wrap: wrap;
+}
+@media (max-width: 600px) {
+  .detail-browse {
+    align-items: flex-start;
+  }
+  .detail-browse > .muted {
+    width: 100%;
+  }
+  .detail-browse .secondary {
+    padding: 10px 16px;
+  }
+}
+
+.sheet-list {
+  display: grid;
+  gap: 12px;
+  margin: 20px 0;
+}
+.sheet-item {
+  border: 1px solid var(--line, #e7e1ee);
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sheet-item .check {
+  align-items: flex-start;
+}
+.sheet-item small {
+  display: block;
+  margin-top: 8px;
+}
+.sheet-item p {
+  margin: 8px 0 0;
+}
+.import-section .form-actions > div > small {
+  display: block;
+  margin-top: 4px;
+}
+.import-level-options .check {
+  min-height: 44px;
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.book-flashcards {
+  width: min(100%, 45rem);
+  margin-inline: auto;
+}
+.flashcard {
+  min-width: 0;
+  padding: clamp(1rem, 4vw, 2.25rem);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  overflow-wrap: anywhere;
+}
+.flashcard h2 {
+  margin: 0 0 1rem;
+  font-size: clamp(1.5rem, 5vw, 2.5rem);
+}
+.flashcard blockquote {
+  margin: 0;
+  font-size: clamp(1.05rem, 3vw, 1.4rem);
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.flashcard .review-answer {
+  margin-top: 1rem;
+}
+.flashcard-note {
+  white-space: pre-wrap;
+}
+.book-flashcard-round {
+  min-height: min(30rem, 65dvh);
+  display: flex;
+  flex-direction: column;
+}
+.flashcard-controls {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: var(--bg);
+  padding: 0.75rem 0 calc(0.75rem + env(safe-area-inset-bottom));
+}
+.flashcard-controls button {
+  min-height: 44px;
 }

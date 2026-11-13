@@ -1,10 +1,10 @@
 # ReadWords
 
-个人英语语料库，默认在 Mac 本地运行。已实现手动采集闭环、两种 Excel P1 导入、数据维护、JSON 备份恢复和 RV-A 认义复习；邮箱密码云端版本已做私有预部署，尚未正式上线，并非完整 R0。
+个人英语语料库，默认在 Mac 本地运行。已实现手动采集闭环、三种受支持格式的 Excel P1 导入、数据维护、JSON 备份恢复和 RV-A 认义复习；个人学习库已迁至 [phrasebud.com](https://phrasebud.com)，支持邮箱密码访问；邮件恢复与完整多设备任务仍待验收，并非完整 R0。
 
 第一次使用请看 [中文使用指南](documents/USER_GUIDE.md)，或启动后打开 [网站内使用指南](http://127.0.0.1:3000/guide)。本 README 主要用于开发、启动及验收。
 
-功能现状见 [Feature List](documents/FEATURE_LIST.md)；后续计划见 [云端与多设备升级方案](documents/07-云端与多设备升级方案.md)。[PRD v0.8](documents/02-产品需求文档.md) 包含已确认本地基线与尚未实现的 C 阶段，不代表当前已上云。
+功能现状见 [Feature List](documents/FEATURE_LIST.md)；后续计划见 [云端与多设备升级方案](documents/07-云端与多设备升级方案.md)。[PRD v0.9](documents/02-产品需求文档.md) 包含已确认本地基线与 C 阶段；正式个人库迁移和剩余验收见 [22 迁移记录](documents/22-正式登录验收与学习库迁移.md)。
 
 Review 需求见 [低压力复习需求与技术设计](documents/11-低压力Review需求与技术设计.md) 和 [开发/验收计划](documents/12-Review开发计划与验收清单.md)：手动选择复习池，限时限量，无补课欠账。当前 RV-A 认义功能已实现，完整 Mac 验收待补，RV-B 未开始。实施证据见 [Review 自检记录](documents/13-Review实现与自检记录.md)。
 
@@ -35,7 +35,7 @@ npm start
 
 可在 `.env.local` 设置 `READWORDS_DB_PATH=/绝对路径/readwords.sqlite`，然后重启服务；这会切换数据库位置，**不会自动搬迁原有数据**。
 
-左下“本地工作空间”→“备份与恢复”可下载全库 JSON（schema 3，兼容有效 schema 2，上限 50 MB），恢复时先校验和预览、生成当前库快照，再确认整库替换。恢复后旧窗口须复制输入并刷新。快照按数据库文件名隔离，默认在 `data/snapshots/readwords.sqlite/`，与数据库同机，不代替异地备份；默认本地模式没有启用定时备份，当前服务器 preview 已配置 COS 加密备份并完成隔离恢复和宿主重启验收，但不包含尚未迁移的 Mac 正式学习库；跨日调度和失败通知仍待验收（见 [备份手册](documents/18-COS异地备份与恢复实施手册.md)、[重启记录](documents/21-服务器重启与持久化验收.md)）。详见 [备份与维护说明](documents/09-备份恢复与数据维护.md)。
+左下“本地工作空间”→“备份与恢复”可下载全库 JSON（schema 3，兼容有效 schema 2，上限 50 MB），恢复时先校验和预览、生成当前库快照，再确认整库替换。恢复后旧窗口须复制输入并刷新。快照按数据库文件名隔离，默认在 `data/snapshots/readwords.sqlite/`，与数据库同机，不代替异地备份；默认本地模式没有启用定时备份，当前正式学习库已迁至服务器，含内容的 COS 加密备份及隔离恢复通过；此前 preview 宿主重启验收通过，新正式卷尚未再次重启。Mac 原库只读留作回退，跨日调度和失败通知仍待验收（见 [备份手册](documents/18-COS异地备份与恢复实施手册.md)、[重启记录](documents/21-服务器重启与持久化验收.md)）。详见 [备份与维护说明](documents/09-备份恢复与数据维护.md)。
 
 首次打开原 schema v1/v2 数据库会在相应升级前生成 `before-schema-v2-*.sqlite` / `before-schema-v3-*.sqlite` 一致性快照，再事务升级到当前 v3。旧 schema 2 JSON 恢复会清除复习进度，须检查预览警告。不要在运行中手动替换数据库；应急回退步骤见上述说明。
 
@@ -55,14 +55,14 @@ npm start
 
 1. 如终端运行的是旧的 `npm start`，先停止服务并重新 `npm run build` / `npm start`；开发模式可重新执行 `npm run dev`。
 2. 刷新页面，点击顶部“导入 Excel”，选择 `resources/bringing_up_bebe_vocabulary_strict_P1_P2_P3.xlsx`。
-3. 检查预览：仅严格 P1 的 120 条语境可选，P2/P3 与汇总表不会入库。
+3. 清单出现后点击“全选可见数据页”，再点击“检查所选内容”；也可只勾选需要的章节。检查预览：仅严格 P1 的 120 条语境可选，P2/P3 与汇总表不会入库。
 4. 选择已有 Reading 来源，或新建 `Bringing Up Bébé`；已有同词默认跳过，可用“仅查看已有同词 / 等级冲突”快速检查并逐组选择。
-5. 勾选确认，点击“确认导入 N 条 P1”。空库默认分组应得到 112 个表达和 120 条语境；已有内容或分组调整会改变数量。
-6. 点击“查看本书的表达”，页面自动按 P1 筛选；详情可展开 Excel 导入信息。
+5. 点击“对比本次导入”，核对新增/重复/变更；默认保留旧值，确认修订后可采用新语境值。再勾选确认，点击“确认导入 N 条 P1”。空库默认分组应得到 112 个表达和 120 条语境；已有内容或分组调整会改变数量。
+6. 点击“查看本书的表达”，页面显示本书全部等级（可再按 P1 筛选）；详情可展开 Excel 导入信息。
 
 表格由服务端在本机解析，不调用 AI；上传后必须由你明确确认才写入。原始文件不被修改，也不会自动提交到 Git。完整规则与验收见 [Excel P1 导入说明](documents/06-Excel-P1导入说明与验收.md)。
 
-Our Little Farm 可直接选择 `resources/Our_Little_Farm_Vocabulary-4.xlsx`，无需改表。应识别 373 条明细、P1/P2/P3=50/192/131，跳过 P1 汇总；自动建议 Our Little Farm 来源。空库全选新增 50 个表达和 50 条语境；已有同词需逐组确认。两种模板都只导入 P1。详见 [新格式说明与验收](documents/10-Our-Little-Farm导入说明与验收.md)。
+Our Little Farm 可直接选择 `resources/Our_Little_Farm_Vocabulary-4.xlsx`，无需改表。应识别 373 条明细、P1/P2/P3=50/192/131，跳过 P1 汇总；自动建议 Our Little Farm 来源。默认仅选 P1 时空库全选新增 50 个表达和 50 条语境；已有同词需逐组确认。三种模板现在均可选择 P1/P2/P3 或全部等级，保留原表等级。旧格式历史验收见 [新格式说明与验收](documents/10-Our-Little-Farm导入说明与验收.md)，新范围见 [29](documents/29-Excel导入等级选择与全量语料.md)。
 
 ## 检查命令
 
@@ -88,3 +88,13 @@ E2E 使用本机已安装的 Google Chrome、独立 3100 端口和系统临时�
 上云准备现已提供邮箱＋密码（Supabase Auth、唯一所有者）、服务端权限校验、维护只读、原生 SQLite 一致性备份/核对、Docker/Caddy 与定时 restic 加密备份配置。默认仍为本地模式。真实 Supabase 的 Mac 登录、退出重登已验证；香港 Ubuntu 服务器已运行私有 preview 容器，健康、鉴权和空库容器重建保卷检查通过。phrasebud.com 状态正常、根域 A 已配置；HTTPS 代理、受信证书与 Mac 公网直连检查通过，空 preview 库的 https://phrasebud.com 已可访问。外部真实登录、SMTP/恢复、异地备份和数据迁移尚待完成。不是 Git push 后自动上云。
 
 配置与完整操作见 [邮箱登录及部署手册](documents/15-邮箱登录配置与部署操作手册.md)，实现及真实缺口见 [上云自检记录](documents/16-上云准备实现与自检记录.md)。追加检查命令：`npm run test:e2e:cloud`（仅合成认证服务和临时库）、`npm run ops -- manifest /absolute/path/readwords.sqlite`。Docker 文件位于 `deploy/`；服务器实况见 [PhraseBud 部署记录](documents/17-PhraseBud部署执行记录.md)，COS 创建及加密恢复流程见 [异地备份手册](documents/18-COS异地备份与恢复实施手册.md)，文档入口与核对结果见 [完整性自检](documents/19-部署文档完整性自检.md)。私有预部署不等于 HTTPS 正式上线。
+
+来源同名时可复用已有来源或明确新建；已有重复来源可在 Library 使用“合并来源”，先预览和快照再确认。两模板导入新增差异对比，默认新增/跳过/保留，详见 [来源去重与增量导入](documents/24-来源去重与增量导入设计及验收.md)。
+
+详情页在词条和中文释义之后优先展示真实原句及出处，多条语境分别保留；复习/维护/统计后置，见 [详情原文优先展示](documents/25-详情原文优先展示与验收.md)。
+
+2026-10-21 新增原句目标加粗高亮与 PhraseBud v1 标准模板支持；不合格式整份提示拦截，旧两模板继续可用，仅导入 P1。操作和验收见 [26](documents/26-原句高亮与标准模板导入.md)。
+
+详情支持按当前来源或搜索结果连续浏览，返回时保留筛选并定位词条。设计、操作和验收见 [27](documents/27-详情连续浏览与列表返回.md)。
+
+Excel 导入支持显式单选/多选/全选可见数据 Sheet，隐藏页手选；标准模板可按章分页，保留 15 列且一次同书同模板。等级默认 P1，也可选 P2/P3、组合或全部。先选页和等级并检查，再对比与确认；完整相同旧记录跳过，未选章节保留，收藏不自动加入复习池。等级扩展与当前发布状态见 [29](documents/29-Excel导入等级选择与全量语料.md)，原选页设计见 [28](documents/28-Excel多Sheet选择导入开发设计与验收.md)。

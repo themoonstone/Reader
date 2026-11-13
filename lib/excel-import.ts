@@ -1,4 +1,8 @@
 import ExcelJS from "exceljs";
+import { selectedSheets } from "./excel-sheets";
+import { foldSheetRows } from "./sheet-duplicates";
+import { loadExcelWorkbook } from "./excel-workbook";
+import { parseStandard, validateWorkbookFormat } from "./standard-import";
 import { parseLittleFarm } from "./little-farm-import";
 import {
   createHash,
@@ -16,94 +20,37 @@ import type {
   ImportGroup,
   ImportChoice,
   ImportResult,
+  ImportDiff,
+  ImportDiffRow,
+  SheetSelection,
+  ImportScope,
 } from "./import-contracts";
-import { inflateRawSync } from "node:zlib";
+import {
+  materialState,
+  hashValue,
+  sealChange,
+  openChange,
+} from "./change-preview";
+import { snapshotBeforeChange } from "./backup";
 
-const MAX_FILE = 5 * 1024 * 1024;
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const state = globalThis as unknown as { readwordsImportSecret?: Buffer };
 const secret = () => (state.readwordsImportSecret ??= randomBytes(32));
 const sign = (s: string) =>
   createHmac("sha256", secret()).update(s).digest("base64url");
 
-// Bound the actual archive expansion before asking the XLSX parser to decompress it.
-function checkArchive(buffer: Buffer) {
-  if (buffer.length > MAX_FILE)
-    throw new AppError("Excel 文件不能超过 5 MB", 413);
-  let end = -1;
-  for (
-    let i = buffer.length - 22;
-    i >= Math.max(0, buffer.length - 65557);
-    i--
-  ) {
-    if (
-      buffer.readUInt32LE(i) === 0x06054b50 &&
-      i + 22 + buffer.readUInt16LE(i + 20) === buffer.length
-    ) {
-      end = i;
-      break;
-    }
-  }
-  if (end < 0) throw new AppError("文件不是有效的 .xlsx 工作簿");
-  const count = buffer.readUInt16LE(end + 10),
-    size = buffer.readUInt32LE(end + 12),
-    offset = buffer.readUInt32LE(end + 16);
-  if (
-    buffer.readUInt16LE(end + 4) !== 0 ||
-    buffer.readUInt16LE(end + 6) !== 0 ||
-    count > 2000 ||
-    offset + size > end
-  )
-    throw new AppError("不支持此 Excel 压缩结构");
-  let cursor = offset,
-    total = 0;
-  for (let n = 0; n < count; n++) {
-    if (
-      cursor + 46 > offset + size ||
-      buffer.readUInt32LE(cursor) !== 0x02014b50
-    )
-      throw new AppError("Excel 文件目录损坏");
-    if (buffer.readUInt16LE(cursor + 8) & 1)
-      throw new AppError("不支持加密工作簿");
-    total += buffer.readUInt32LE(cursor + 24);
-    if (total > 40 * 1024 * 1024)
-      throw new AppError("Excel 解压内容超过 40 MB，请缩小文件", 413);
-    const compressed = buffer.readUInt32LE(cursor + 20),
-      length = buffer.readUInt32LE(cursor + 24),
-      local = buffer.readUInt32LE(cursor + 42),
-      method = buffer.readUInt16LE(cursor + 10);
-    if (local + 30 > offset || buffer.readUInt32LE(local) !== 0x04034b50)
-      throw new AppError("Excel 压缩条目无效");
-    const start =
-      local +
-      30 +
-      buffer.readUInt16LE(local + 26) +
-      buffer.readUInt16LE(local + 28);
-    if (start + compressed > offset || ![0, 8].includes(method))
-      throw new AppError("Excel 压缩条目不受支持");
-    try {
-      const raw =
-        method === 0
-          ? buffer.subarray(start, start + compressed)
-          : inflateRawSync(buffer.subarray(start, start + compressed), {
-              maxOutputLength: Math.max(1, length),
-            });
-      if (raw.length !== length) throw Error();
-    } catch {
-      throw new AppError("Excel 压缩内容大小不一致或已损坏");
-    }
-    cursor +=
-      46 +
-      buffer.readUInt16LE(cursor + 28) +
-      buffer.readUInt16LE(cursor + 30) +
-      buffer.readUInt16LE(cursor + 32);
-  }
-  if (cursor !== offset + size) throw new AppError("Excel 文件目录无效");
-}
-type Payload = { expires: number; fileName: string; rows: ImportRow[] };
+type Payload = {
+  expires: number;
+  fileName: string;
+  rows: ImportRow[];
+  scope?: ImportScope;
+};
 function makeToken(payload: Payload) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${encoded}.${sign(encoded)}`;
+  const token = `${encoded}.${sign(encoded)}`;
+  if (token.length > 3 * 1024 * 1024)
+    throw new AppError("导入预览过大，请减少所选页/行再检查", 413);
+  return token;
 }
 function readToken(token: string): Payload {
   if (token.length > 3 * 1024 * 1024) throw new AppError("导入预览过大");
@@ -121,6 +68,10 @@ function readToken(token: string): Payload {
     throw new AppError("预览已超过 30 分钟，请重新上传", 409);
   return payload;
 }
+const importMeaning = (row: ImportRow) =>
+  row.data.importMetadata?.profile === "phrasebud-v1"
+    ? row.data.meaning
+    : row.data.importMetadata!.contextMeaningEnglish;
 const groupKey = (row: ImportRow) =>
   hash(JSON.stringify([normalize(row.data.term), row.data.meaning]));
 export function groupsFor(rows: ImportRow[], store: Store): ImportGroup[] {
@@ -151,17 +102,52 @@ export async function previewExcel(
   buffer: Buffer,
   fileName: string,
   store: Store,
+  selection?: SheetSelection,
 ): Promise<ImportPreview> {
-  if (!/\.xlsx$/i.test(fileName) || fileName.length > 250)
-    throw new AppError("请选择 .xlsx 文件（不支持 .xls / .xlsm）");
-  checkArchive(buffer);
-  const workbook = new ExcelJS.Workbook();
-  try {
-    await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
-  } catch {
-    throw new AppError("无法读取工作簿，请确认文件未加密且格式正确");
-  }
-  const farm = parseLittleFarm(workbook, fileName);
+  const generation = store.generation;
+  const workbook = await loadExcelWorkbook(buffer, fileName);
+  const range = selection
+    ? selectedSheets(workbook, buffer, selection, generation)
+    : null;
+  if (
+    range &&
+    range.chosen.reduce((n, s) => n + (s.estimatedRows || 0), 0) > 5000
+  )
+    throw new AppError("所选工作表合计最多支持 5,000 条数据行（包含 P2/P3）");
+  let standard: ReturnType<typeof parseStandard> | null = null;
+  if (range?.chosen[0].profile === "phrasebud-v1") {
+    for (const info of range.chosen) {
+      const page = parseStandard(
+        workbook,
+        fileName,
+        info.name,
+        true,
+        range.priorities,
+      );
+      if (!standard) standard = page;
+      else {
+        if (normalize(standard.title) !== normalize(page.title))
+          throw new AppError(`${info.name}：所选工作表书名不一致，请分开选择`);
+        standard.rows.push(...page.rows);
+        standard.all.push(...page.all);
+        for (const level of ["P1", "P2", "P3"])
+          standard.counts[level] += page.counts[level];
+        standard.detailSheets++;
+      }
+    }
+  } else if (!range && validateWorkbookFormat(workbook))
+    standard = parseStandard(workbook, fileName);
+  const scopedWorkbook = range ? new ExcelJS.Workbook() : workbook;
+  if (range)
+    for (const info of range.chosen)
+      scopedWorkbook.addWorksheet(info.name).model = workbook.getWorksheet(
+        info.name,
+      )!.model;
+  const farm =
+    standard ??
+    (range?.chosen[0].profile === "bebe-strict-v1"
+      ? null
+      : parseLittleFarm(scopedWorkbook, fileName, !!range, range?.priorities));
   const rows: ImportRow[] = farm?.rows ?? [],
     all: { term: string; priority: string }[] = farm?.all ?? [],
     skippedSheets: string[] = farm?.skippedSheets ?? [];
@@ -171,9 +157,15 @@ export async function previewExcel(
     P3: 0,
   };
   let detailSheets = farm?.detailSheets ?? 0;
-  for (const sheet of farm ? [] : workbook.worksheets) {
+  for (const sheet of farm ? [] : scopedWorkbook.worksheets) {
     const headers = new Map<string, number>();
-    sheet.getRow(1).eachCell((c, i) => headers.set(c.text.trim(), i));
+    sheet.getRow(1).eachCell((c, i) => {
+      const name = c.text.trim();
+      if (!name) return;
+      if (headers.has(name))
+        throw new AppError(`${sheet.name} 表头重复：${name}`);
+      headers.set(name, i);
+    });
     if (!headers.has("Circled item") || !headers.has("复习优先级（严格版）")) {
       skippedSheets.push(sheet.name);
       continue;
@@ -210,7 +202,7 @@ export async function previewExcel(
       counts[priority]++;
       all.push({ term, priority });
       if (all.length > 5000) throw new AppError("最多支持 5,000 行章节明细");
-      if (priority !== "P1") continue;
+      if (priority !== "P1" && !range) continue;
       const meaning = text(row, "Dictionary / core Chinese meaning"),
         sentence = text(row, "Sentence / context"),
         page = text(row, "Page") || text(row, "原文页码");
@@ -245,7 +237,7 @@ export async function previewExcel(
         sourceType: "Reading",
         meaning,
         expressionType: originalType === "sentence" ? "chunk" : originalType,
-        priority: "P1",
+        priority,
         eventKind: "exposure",
         whySaved: "useful",
         sentence,
@@ -275,9 +267,20 @@ export async function previewExcel(
         throw new AppError(
           `${sheet.name} 第 ${index} 行缺少释义，请补全后导入`,
         );
-      rows.push({ key: rowKey, sheet: sheet.name, row: index, data, warnings });
+      if (
+        (range?.priorities ?? ["P1"]).includes(priority as "P1" | "P2" | "P3")
+      )
+        rows.push({
+          key: rowKey,
+          sheet: sheet.name,
+          row: index,
+          data,
+          warnings,
+        });
     }
   }
+  if (range && all.length > 5000)
+    throw new AppError("所选工作表合计最多支持 5,000 条数据行（包含 P2/P3）");
   if (!detailSheets)
     throw new AppError(
       "未找到章节明细：需要 Circled item 和复习优先级（严格版）列",
@@ -291,27 +294,75 @@ export async function previewExcel(
   for (const row of rows) {
     if (levels.get(normalize(row.data.term))!.size > 1) {
       row.data.importMetadata!.priorityConflict = true;
-      row.warnings.push("其他章节有不同等级，本次仅取严格 P1");
+      row.warnings.push(
+        range
+          ? "所选页面同词条有不同等级；各语境保留原等级"
+          : "其他章节有不同等级，本次仅取严格 P1",
+      );
     }
   }
+  const book = standard
+    ? standard.title
+    : farm
+      ? "Our Little Farm"
+      : "Bringing Up Bébé";
+  const folded = range ? foldSheetRows(rows, book) : { rows, duplicates: [] };
+  if (new Set(folded.rows.map((r) => r.key)).size !== folded.rows.length)
+    throw new AppError("导入行标识冲突，请核对重复行或拆分文件");
+  const groups = groupsFor(folded.rows, store);
+  if (groups.length > 1000)
+    throw new AppError("最多支持 1,000 个义项分组，请减少所选页/行");
+  const scope: ImportScope | undefined = range
+    ? {
+        version: 2,
+        mode: "selected-sheets-v1",
+        generation,
+        fileHash: range.fileHash,
+        selectedSheets: range.chosen.map(({ sheetId, name }) => ({
+          sheetId,
+          name,
+        })),
+        book,
+        fileDuplicateCount: rows.length - folded.rows.length,
+        priorities: range.priorities,
+      }
+    : undefined;
   return {
-    profile: farm ? "little-farm-v1" : "bebe-strict-v1",
-    formatLabel: farm
-      ? "Our Little Farm 章节词汇表"
-      : "Bringing Up Bébé 严格分级表",
-    suggestedTitle: farm ? "Our Little Farm" : "Bringing Up Bébé",
-    token: makeToken({ expires: Date.now() + 30 * 60 * 1000, fileName, rows }),
+    ...(scope ? { selection: scope, fileDuplicates: folded.duplicates } : {}),
+    profile: standard
+      ? "phrasebud-v1"
+      : farm
+        ? "little-farm-v1"
+        : "bebe-strict-v1",
+    formatLabel: standard
+      ? "PhraseBud v1 标准语料模板"
+      : farm
+        ? "Our Little Farm 章节词汇表"
+        : "Bringing Up Bébé 严格分级表",
+    suggestedTitle: standard
+      ? standard.title
+      : farm
+        ? "Our Little Farm"
+        : "Bringing Up Bébé",
+    token: makeToken({
+      expires: Date.now() + 30 * 60 * 1000,
+      fileName,
+      rows: folded.rows,
+      ...(scope ? { scope } : {}),
+    }),
     fileName,
     totalRows: all.length,
     counts,
     detailSheets,
-    skippedSheets,
-    groups: groupsFor(rows, store),
+    skippedSheets: range?.skipped ?? skippedSheets,
+    groups,
     excludedRows: all.length - rows.length,
     warnings: [
-      farm
-        ? "保留原表中文释义与英文语境义；原文片段和学习改写分开保存。合并页码不拆分次数。"
-        : "中文列是词典义项；英文语境释义将单独保留，不冒充中文语境翻译。",
+      standard
+        ? "保留中文语境义、原文核对状态、高亮词形、补充例句与来源；待核对内容不视为原书准确引文。"
+        : farm
+          ? "保留原表中文释义与英文语境义；原文片段和学习改写分开保存。合并页码不拆分次数。"
+          : "中文列是词典义项；英文语境释义将单独保留，不冒充中文语境翻译。",
       "只按实际词条与相同中文义项分组，不按变形或搭配自动合并。",
     ],
   };
@@ -321,6 +372,11 @@ export const commitSchema = z.object({
   sourceId: z.uuid().optional(),
   title: z.string().trim().min(1).max(200),
   confirmed: z.literal(true),
+  separateSource: z.boolean().optional(),
+  diffToken: z.string().max(8192).optional(),
+  updates: z
+    .record(z.string().length(64), z.enum(["keep", "update", "add"]))
+    .optional(),
   choices: z
     .array(
       z.object({
@@ -331,6 +387,262 @@ export const commitSchema = z.object({
     )
     .max(1000),
 });
+type ImportOptions = z.infer<typeof commitSchema>;
+function chosenSource(store: Store, o: ImportOptions) {
+  if (o.sourceId) {
+    if (o.separateSource) throw new AppError("独立新建和复用来源不能同时选择");
+    const s = store.getSource(o.sourceId);
+    if (s.type !== "Reading" || s.lifecycle !== "active")
+      throw new AppError("请选择有效的 Reading 来源");
+    return s;
+  }
+  const same = store
+    .sources()
+    .filter(
+      (s) => s.type === "Reading" && normalize(s.title) === normalize(o.title),
+    );
+  if (o.separateSource) return undefined;
+  if (same.length === 1 && same[0].lifecycle === "active") return same[0];
+  if (same.length)
+    throw new AppError(
+      "已有多个同名或归档来源，请明确选择来源或新建独立来源",
+      409,
+    );
+}
+function scopedSource(store: Store, o: ImportOptions, payload: Payload) {
+  if (payload.scope) {
+    if (
+      payload.scope.version !== 2 ||
+      payload.scope.mode !== "selected-sheets-v1" ||
+      payload.scope.generation !== store.generation
+    )
+      throw new AppError(
+        "学习库或导入预览已变化，请重新检查工作表",
+        409,
+        "PREVIEW_STALE",
+      );
+    if (normalize(o.title) !== normalize(payload.scope.book))
+      throw new AppError("来源标题与所选书名不一致，请核对");
+  }
+  const source = chosenSource(store, o);
+  if (
+    payload.scope &&
+    source &&
+    normalize(source.title) !== normalize(payload.scope.book)
+  )
+    throw new AppError("所选来源与工作表书名不一致，请更换来源");
+  return source;
+}
+function selectionHash(o: ImportOptions) {
+  return hashValue([
+    o.token,
+    o.sourceId || "",
+    o.title,
+    o.separateSource || false,
+    [...o.choices].sort((a, b) => a.groupKey.localeCompare(b.groupKey)),
+  ]);
+}
+function diffRows(
+  store: Store,
+  payload: Payload,
+  o: ImportOptions,
+): ImportDiff["rows"] {
+  const source = scopedSource(store, o, payload);
+  const known = source
+    ? store
+        .all(
+          "SELECT c.*,e.lifecycle AS expression_lifecycle FROM contexts c JOIN expressions e ON e.id=c.expression_id WHERE c.source_id=? ORDER BY c.id",
+          source.id,
+        )
+        .map((r) => ({
+          id: String(r.id),
+          lifecycle: String(r.lifecycle),
+          expression_lifecycle: String(r.expression_lifecycle),
+          parsed: JSON.parse(String(r.data)) as DraftInput,
+        }))
+    : [];
+  const selected = new Map(
+    o.choices.map((c) => [c.groupKey, c.action !== "skip"]),
+  );
+  const result: ImportDiff["rows"] = payload.rows.map((row) => {
+    const d = row.data,
+      meta = d.importMetadata!;
+    const sameTerm = (old: (typeof known)[number]) =>
+      normalize(old.parsed.term) === normalize(d.term);
+    let matches = known.filter(
+      (old) => old.parsed.importMetadata?.rowKey === row.key,
+    );
+    let reason = "相同导入明细";
+    if (!matches.length && payload.scope && meta.profile === "phrasebud-v1") {
+      const legacyKey = hashValue([
+        "phrasebud-v1",
+        normalize(payload.scope.book),
+        row.row,
+        normalize(d.term),
+        d.sentence,
+        d.chapter,
+        d.page,
+      ]);
+      matches = known.filter(
+        (old) =>
+          old.parsed.importMetadata?.rowKey === legacyKey &&
+          old.parsed.importMetadata.profile === meta.profile &&
+          old.parsed.importMetadata.sheet === row.sheet &&
+          sameTerm(old) &&
+          old.parsed.sentence === d.sentence &&
+          old.parsed.chapter === d.chapter &&
+          old.parsed.page === d.page,
+      );
+    }
+    if (!matches.length) {
+      matches = known.filter(
+        (old) =>
+          (!payload.scope ||
+            old.parsed.importMetadata?.profile === meta.profile) &&
+          sameTerm(old) &&
+          old.parsed.sentence === d.sentence &&
+          old.parsed.chapter === d.chapter &&
+          old.parsed.page === d.page,
+      );
+      reason = "相同词条、原句与位置（文件重排不重复添加）";
+    }
+    if (!matches.length) {
+      matches = known.filter(
+        (old) =>
+          sameTerm(old) &&
+          old.parsed.importMetadata?.profile === meta.profile &&
+          old.parsed.importMetadata.sheet === meta.sheet &&
+          old.parsed.importMetadata.row === meta.row &&
+          !payload.rows.some(
+            (other) =>
+              other.key !== row.key &&
+              normalize(other.data.term) === normalize(old.parsed.term) &&
+              other.data.sentence === old.parsed.sentence &&
+              other.data.chapter === old.parsed.chapter,
+          ),
+      );
+      reason = "原表同一位置可能修订，请核对新旧内容后选择";
+    }
+    const base = {
+      key: row.key,
+      term: d.term,
+      selected: selected.get(groupKey(row)) || false,
+      reason,
+      fields: [] as ImportDiffRow["fields"],
+    };
+    if (matches.length > 1)
+      return {
+        ...base,
+        status: "ambiguous" as const,
+        reason: "匹配到多个旧语境，保留原数据；请先在详情中核对",
+      };
+    if (!matches.length)
+      return { ...base, status: "new" as const, reason: "原库没有匹配语境" };
+    const old = matches[0];
+    if (
+      old.lifecycle !== "active" ||
+      old.expression_lifecycle !== "active" ||
+      old.parsed.importMetadata?.profile !== meta.profile
+    )
+      return {
+        ...base,
+        status: "protected" as const,
+        contextId: String(old.id),
+        reason: "旧记录已归档/删除或来自其他采集方式，本次保留，不自动恢复",
+      };
+    const incoming = { ...d, meaning: importMeaning(row) };
+    const fields: ImportDiffRow["fields"] = [];
+    for (const key of [
+      "sentence",
+      "chapter",
+      "page",
+      "meaning",
+      ...(payload.scope ? ["priority" as const] : []),
+      ...(meta.profile === "phrasebud-v1" ? ["targetSurface" as const] : []),
+    ] as const)
+      if (old.parsed[key] !== incoming[key])
+        fields.push({
+          field: key,
+          before: old.parsed[key],
+          after: incoming[key],
+        });
+    for (const key of Object.keys(meta) as (keyof typeof meta)[]) {
+      if (
+        [
+          "rowKey",
+          "fileName",
+          "row",
+          "sheet",
+          ...(payload.scope ? ["priorityConflict"] : []),
+        ].includes(key)
+      )
+        continue;
+      const before = old.parsed.importMetadata?.[key],
+        after = meta[key];
+      if ((before ?? "") !== (after ?? ""))
+        fields.push({
+          field: `导入.${key}`,
+          before: String(before ?? ""),
+          after: String(after ?? ""),
+        });
+    }
+    return {
+      ...base,
+      contextId: String(old.id),
+      fields,
+      status: fields.length ? ("changed" as const) : ("duplicate" as const),
+    };
+  });
+  const shared = new Map<string, ImportDiffRow[]>();
+  for (const row of result)
+    if (row.contextId) {
+      const group = shared.get(row.contextId) || [];
+      group.push(row);
+      shared.set(row.contextId, group);
+    }
+  for (const group of shared.values())
+    if (group.length > 1 && group.some((r) => r.status === "changed"))
+      for (const row of group) {
+        row.status = "ambiguous";
+        row.reason = "本次多行匹配同一旧记录，保留旧值；如为不同义项请明确新建";
+      }
+  return result;
+}
+export function previewImportDiff(store: Store, input: unknown): ImportDiff {
+  const o = commitSchema.parse(input),
+    payload = readToken(o.token);
+  return store.transaction(
+    () => {
+      const groups = groupsFor(payload.rows, store),
+        keys = new Set(o.choices.map((c) => c.groupKey));
+      if (
+        keys.size !== groups.length ||
+        keys.size !== o.choices.length ||
+        groups.some((g) => !keys.has(g.key))
+      )
+        throw new AppError("请为每个分组选择导入方式");
+      const rows = diffRows(store, payload, o),
+        counts: ImportDiff["counts"] = {
+          new: 0,
+          duplicate: 0,
+          changed: 0,
+          protected: 0,
+          ambiguous: 0,
+        };
+      for (const r of rows) if (r.selected) counts[r.status]++;
+      return {
+        sourceId: scopedSource(store, o, payload)?.id,
+        rows,
+        counts,
+        token: sealChange("import-diff", {
+          selection: selectionHash(o),
+          state: materialState(store),
+        }),
+      };
+    },
+    { readOnly: true },
+  );
+}
 export function commitExcel(store: Store, input: unknown): ImportResult {
   const options = commitSchema.parse(input),
     payload = readToken(options.token),
@@ -343,94 +655,165 @@ export function commitExcel(store: Store, input: unknown): ImportResult {
   )
     throw new AppError("请为每个分组明确选择导入方式");
   if (options.choices.every((c) => c.action === "skip"))
-    throw new AppError("至少选择一个 P1 分组");
+    throw new AppError(
+      payload.scope ? "至少选择一个语境分组" : "至少选择一个 P1 分组",
+    );
   return store.transaction(() => {
-    let sourceId = options.sourceId;
-    if (sourceId) {
-      const source = store.getSource(sourceId);
-      if (source.type !== "Reading" || source.lifecycle !== "active")
-        throw new AppError("请选择有效的 Reading 来源");
-    } else {
-      const existing = store
-        .sources()
-        .filter(
-          (s) =>
-            s.type === "Reading" &&
-            normalize(s.title) === normalize(options.title),
-        );
-      // Recover safely if the first success response was lost: reuse only when all
-      // selected rows already belong to the one exact source. Never silently merge.
-      const selected = groups
-        .filter((g) => choices.get(g.key)!.action !== "skip")
-        .flatMap((g) => g.rows);
+    scopedSource(store, options, payload);
+    if (payload.scope && !options.diffToken)
+      throw new AppError("请先对比本次导入再确认", 409);
+    if (options.diffToken) {
+      const proof = openChange<{ selection: string; state: string }>(
+        options.diffToken,
+        "import-diff",
+      );
       if (
-        existing.length === 1 &&
-        existing[0].lifecycle === "active" &&
-        selected.every((r) =>
-          store.one(
-            "SELECT id FROM contexts WHERE source_id=? AND json_extract(data,'$.importMetadata.rowKey')=?",
-            existing[0].id,
-            r.key,
-          ),
-        )
+        proof.selection !== selectionHash(options) ||
+        proof.state !== materialState(store)
       )
-        sourceId = existing[0].id;
-      else if (existing.length > 0)
         throw new AppError(
-          "已有同名来源，请选择复用它（归档来源须先恢复）",
+          "差异预览后学习库或选择已变化，请重新对比",
           409,
+          "PREVIEW_STALE",
         );
-      else
-        sourceId = store.createSource({
-          id: randomUUID(),
-          title: options.title,
-          type: "Reading",
-          readingStatus:
-            payload.rows[0]?.data.importMetadata?.profile === "little-farm-v1"
-              ? "reading"
-              : "finished",
-        }).id;
     }
+    const differences = diffRows(store, payload, options),
+      byKey = new Map(differences.map((d) => [d.key, d]));
+    const updateKeys = Object.entries(options.updates || {})
+      .filter(([, v]) => v === "update")
+      .map(([k]) => k);
+    const resolutionKeys = Object.entries(options.updates || {})
+      .filter(([, v]) => v !== "keep")
+      .map(([k]) => k);
+    if (resolutionKeys.length && !options.diffToken)
+      throw new AppError("更新或新增冲突记录前必须重新对比", 409);
+    for (const key of resolutionKeys) {
+      const d = byKey.get(key),
+        action = options.updates![key];
+      if (
+        !d ||
+        !d.selected ||
+        (action === "update"
+          ? d.status !== "changed"
+          : !["changed", "ambiguous"].includes(d.status))
+      )
+        throw new AppError("只能处理预览中已选中的变更或待核对记录", 409);
+      if (action === "add") {
+        const row = payload.rows.find((r) => r.key === key)!;
+        if (!["new", "split"].includes(choices.get(groupKey(row))!.action))
+          throw new AppError(
+            "新增独立义项请先将本组导入方式选为新建或每行单独保存",
+            409,
+          );
+      }
+    }
+    const snapshot = updateKeys.length
+      ? snapshotBeforeChange(store)
+      : undefined;
+    let sourceId = scopedSource(store, options, payload)?.id;
+    if (!sourceId)
+      sourceId = store.createSource({
+        id: randomUUID(),
+        title: options.title,
+        type: "Reading",
+        allowSameName: options.separateSource === true,
+        readingStatus:
+          payload.scope ||
+          payload.rows[0]?.data.importMetadata?.profile === "little-farm-v1"
+            ? "reading"
+            : "finished",
+      }).id;
     const result: ImportResult = {
+      ...(payload.scope
+        ? {
+            fileDuplicateContexts: payload.scope.fileDuplicateCount,
+            skippedGroupContexts: groups
+              .filter((g) => choices.get(g.key)!.action === "skip")
+              .reduce((n, g) => n + g.rows.length, 0),
+          }
+        : {}),
       sourceId,
       createdExpressions: 0,
       importedContexts: 0,
       skippedContexts: 0,
+      updatedContexts: 0,
+      retainedChanges: 0,
+      snapshot,
     };
     for (const group of groups) {
       const choice = choices.get(group.key)!;
       if (choice.action === "skip") continue;
-      let expressionId = choice.expressionId;
+      let expressionId =
+        choice.action === "existing" ? choice.expressionId : undefined;
       if (choice.action === "existing") {
         const candidate = store
           .candidates(group.term)
-          .find((e) => e.id === expressionId);
+          .find((e) => e.id === choice.expressionId);
         if (!candidate || candidate.lifecycle !== "active")
           throw new AppError(
             `“${group.term}”的目标义项不可用，请重新预览`,
             409,
           );
-        if (candidate.priority !== "P1")
+        if (!payload.scope && candidate.priority !== "P1")
           throw new AppError(
             `“${group.term}”的既有义项不是 P1；请新建或先调整等级`,
             409,
           );
-      } else expressionId = undefined;
+      }
       for (const row of group.rows) {
-        const known = store.one(
-          "SELECT id FROM contexts WHERE source_id=? AND json_extract(data,'$.importMetadata.rowKey')=?",
-          sourceId,
-          row.key,
-        );
-        if (known) {
-          result.skippedContexts++;
+        const diff = byKey.get(row.key)!;
+        if (diff.status !== "new" && options.updates?.[row.key] !== "add") {
+          if (
+            diff.status === "changed" &&
+            options.updates?.[row.key] === "update"
+          ) {
+            const old = store.context(diff.contextId!);
+            const d = {
+              ...old.data,
+              sentence: row.data.sentence,
+              chapter: row.data.chapter,
+              page: row.data.page,
+              meaning: importMeaning(row),
+              ...(payload.scope ? { priority: row.data.priority } : {}),
+              ...(row.data.importMetadata!.profile === "phrasebud-v1"
+                ? { targetSurface: row.data.targetSurface }
+                : {}),
+              importMetadata: row.data.importMetadata,
+            };
+            store.updateContext(old.id, d, old.version, old.expressionId);
+            store.db
+              .prepare("UPDATE contexts SET data=? WHERE id=?")
+              .run(JSON.stringify(d), old.id);
+            result.updatedContexts!++;
+          } else {
+            result.skippedContexts++;
+            if (diff.status === "changed") result.retainedChanges!++;
+          }
           continue;
         }
+        if (choice.action === "existing") {
+          const candidate = store
+            .candidates(group.term)
+            .find((e) => e.id === choice.expressionId);
+          if (
+            !candidate ||
+            candidate.lifecycle !== "active" ||
+            (!payload.scope && candidate.priority !== "P1")
+          )
+            throw new AppError(
+              `“${group.term}”的目标义项不可用${payload.scope ? "" : "或不是 P1"}，请重新预览`,
+              409,
+            );
+          expressionId = choice.expressionId;
+        } else if (!expressionId) expressionId = undefined;
         if (choice.action === "split") expressionId = undefined;
         const d = {
           ...row.data,
           sourceId,
-          meaning: row.data.importMetadata!.contextMeaningEnglish,
+          meaning: importMeaning(row),
+          ...(row.data.importMetadata!.profile === "phrasebud-v1"
+            ? { targetSurface: row.data.targetSurface }
+            : {}),
         };
         // The Expression keeps the provided dictionary Chinese sense; Context stores the
         // original English contextual meaning. Neither is invented or silently translated.
@@ -442,9 +825,13 @@ export function commitExcel(store: Store, input: unknown): ImportResult {
         });
         if (!expressionId) {
           result.createdExpressions++;
+          const priority =
+            choice.action === "split"
+              ? row.data.priority
+              : group.rows.map((r) => r.data.priority).sort()[0];
           store.db
-            .prepare("UPDATE expressions SET meaning=? WHERE id=?")
-            .run(group.meaning, saved.expressionId!);
+            .prepare("UPDATE expressions SET meaning=?,priority=? WHERE id=?")
+            .run(group.meaning, priority, saved.expressionId!);
         }
         expressionId = saved.expressionId!;
         result.importedContexts++;

@@ -437,6 +437,13 @@ function snapshot(store: Store, b: Backup) {
   }
   return name;
 }
+/** Durable full snapshot before a user-confirmed merge/import update. */
+export function snapshotBeforeChange(store: Store) {
+  const b = exportBackup(store);
+  if (Buffer.byteLength(JSON.stringify(b)) > MAX_BACKUP)
+    throw new AppError("学习库超过快照恢复上限，操作已取消", 413);
+  return snapshot(store, b);
+}
 type Preview = {
   data: Backup;
   digest: string;

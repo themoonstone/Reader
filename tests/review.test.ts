@@ -1027,3 +1027,77 @@ test("Concurrent API issuance with different ids and same version cannot double-
     f.store.close();
   }
 });
+
+test("Feedback uses one timestamp for review and interval even when every clock read advances", () => {
+  for (const result of ["remember", "hard", "forgot"] as const) {
+    let at = Date.parse("2026-11-03T01:00:00.000Z");
+    // A real clock can cross a millisecond between reads. Make that boundary
+    // deterministic without weakening strict backup interval validation.
+    const store = new Store(":memory:", () => at++);
+    try {
+      const source = store.createSource({
+        id: randomUUID(),
+        type: "Reading",
+        title: "Feedback clock",
+      });
+      const draft = store.createDraft(randomUUID(), {
+        ...emptyDraft("Reading", source.id),
+        term: "clock",
+        meaning: "时钟",
+        sentence: "The clock keeps moving.",
+        priority: "P1",
+      });
+      const expressionId = store.saveDraft(draft.id, {
+        version: 1,
+      }).expressionId!;
+      const review = new Review(store),
+        tab = randomUUID();
+      review.add({
+        operation_id: randomUUID(),
+        expression_ids: [expressionId],
+        expected_versions: { [expressionId]: 0 },
+      });
+      let v = review.start({
+        owner_tab: tab,
+        request_id: randomUUID(),
+        budget_seconds: 600,
+        card_limit: 5,
+        new_limit: 3,
+      });
+      const token = v.leaseToken!;
+      const writer = () => ({
+        owner_tab: tab,
+        token,
+        lease_version: v.lease!.version,
+        session_version: v.session!.version,
+        delta_ms: 0,
+      });
+      v = review.next(v.session!.id, { ...writer(), request_id: randomUUID() });
+      v = review.reveal(v.card!.id, {
+        ...writer(),
+        card_version: v.card!.version,
+      });
+      v = review.feedback(v.card!.id, {
+        ...writer(),
+        card_version: v.card!.version,
+        result,
+      });
+      assert.equal(v.feedbackCount, 1);
+      const backup = validateBackup(exportBackup(store));
+      assert.equal(backup.review_records.length, 1);
+      const record = backup.review_records[0];
+      assert.equal(
+        record.new_eligible_after,
+        reviewInterval(record.old_stage, result, Date.parse(record.reviewed_at))
+          .eligibleAfter,
+      );
+      const corrupted = structuredClone(backup);
+      corrupted.review_records[0].new_eligible_after = new Date(
+        Date.parse(record.new_eligible_after) + 1,
+      ).toISOString();
+      assert.throws(() => validateBackup(corrupted), /反馈间隔无效/);
+    } finally {
+      store.close();
+    }
+  }
+});

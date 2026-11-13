@@ -10,6 +10,7 @@ import {
 } from "@/lib/review-contracts";
 import type { Source, Expression } from "@/lib/contracts";
 import { ErrorBox, Field } from "./components";
+import Flashcard from "./flashcard";
 const tabState = globalThis as unknown as { readwordsReviewTab?: string };
 const tabId = () => (tabState.readwordsReviewTab ??= crypto.randomUUID());
 const elapsedText = (ms: number) =>
@@ -663,11 +664,12 @@ export default function ReviewPage({ sources }: { sources: Source[] }) {
             </>
           )}
           {c && (
-            <article aria-label="当前复习卡">
-              <h2 ref={focus} tabIndex={-1}>
-                {c.front.term}
-              </h2>
-              <blockquote>{c.front.sentence}</blockquote>
+            <Flashcard
+              label="当前复习卡"
+              term={c.front.term}
+              sentence={c.front.sentence}
+              headingRef={focus}
+            >
               {c.state === "invalidated" ? (
                 <p role="status">材料已修改，这张卡已失效，不保存反馈。</p>
               ) : (
@@ -704,7 +706,7 @@ export default function ReviewPage({ sources }: { sources: Source[] }) {
                     </button>
                   )}
                   {c.state === "revealed" && (
-                    <div className="actions">
+                    <div className="actions wrap">
                       {(
                         [
                           ["forgot", "忘了"],
@@ -735,7 +737,7 @@ export default function ReviewPage({ sources }: { sources: Source[] }) {
                   跳过这张
                 </button>
               )}
-            </article>
+            </Flashcard>
           )}
           {(!c || !unresolved) && (
             <button

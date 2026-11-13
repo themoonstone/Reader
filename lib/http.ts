@@ -16,7 +16,10 @@ import {
   readSnapshot,
   MAX_BACKUP,
 } from "./backup";
-import { previewExcel, commitExcel } from "./excel-import";
+import { inspectExcel, sheetSelectionSchema } from "./excel-sheets";
+import { previewExcel, commitExcel, previewImportDiff } from "./excel-import";
+import { previewSourceMerge, commitSourceMerge } from "./source-merge";
+import { bookFlashcards } from "./flashcards";
 
 export async function handle(
   request: Request,
@@ -45,9 +48,17 @@ export async function handle(
     const [resource, id, action, reviewAction] = segments;
     if (segments.length > (resource === "review" ? 4 : 3))
       throw new AppError("接口不存在", 404);
+    if (
+      resource === "sources" &&
+      action === "flashcards" &&
+      request.method !== "GET"
+    )
+      throw new AppError("书籍闪卡仅支持读取", 405);
     if (request.method === "GET") {
       let data;
-      if (resource === "review" && segments.length === 2) {
+      if (resource === "sources" && id && action === "flashcards")
+        data = bookFlashcards(db, id, url.searchParams);
+      else if (resource === "review" && segments.length === 2) {
         const review = new Review(db);
         if (id === "pool") data = review.pool();
         else if (id === "session") data = review.current();
@@ -70,7 +81,7 @@ export async function handle(
       else if (resource === "drafts") data = id ? db.getDraft(id) : db.drafts();
       else if (resource === "candidates")
         data = db.candidates(url.searchParams.get("term") || "");
-      else if (resource === "expressions")
+      else if (resource === "expressions") {
         data = id
           ? db.expression(id)
           : db.search(
@@ -80,7 +91,9 @@ export async function handle(
               url.searchParams.get("archived") === "1",
               url.searchParams.get("sourceId") || "",
             );
-      else throw new AppError("接口不存在", 404);
+        if (!id && url.searchParams.get("idsOnly") === "1")
+          data = (data as { id: string }[]).map((item) => item.id);
+      } else throw new AppError("接口不存在", 404);
       return json(data, { headers });
     }
     const limit =
@@ -173,7 +186,19 @@ export async function handle(
       else if (id === "snapshot")
         data = readSnapshot(db, z.string().parse(body.name));
       else throw new AppError("接口不存在", 404);
-    } else if (resource === "expressions" && id && request.method === "PATCH")
+    } else if (
+      resource === "sources" &&
+      id === "merge-preview" &&
+      request.method === "POST"
+    )
+      data = previewSourceMerge(db, body);
+    else if (
+      resource === "sources" &&
+      id === "merge" &&
+      request.method === "POST"
+    )
+      data = commitSourceMerge(db, body);
+    else if (resource === "expressions" && id && request.method === "PATCH")
       data = db.updateExpression(
         id,
         body.data,
@@ -221,7 +246,7 @@ export async function handle(
       );
     else if (
       resource === "imports" &&
-      id === "preview" &&
+      ["inspect", "preview"].includes(id) &&
       request.method === "POST"
     ) {
       const file = z
@@ -233,25 +258,52 @@ export async function handle(
             .regex(/^[A-Za-z0-9+/]*={0,2}$/),
         })
         .parse(body);
-      data = await previewExcel(
-        Buffer.from(file.content, "base64"),
-        file.fileName,
-        db,
-      );
+      const buffer = Buffer.from(file.content, "base64");
+      const selection =
+        body.mode === undefined
+          ? undefined
+          : sheetSelectionSchema.parse({
+              mode: body.mode,
+              inspectionToken: body.inspectionToken,
+              selectedSheetIds: body.selectedSheetIds,
+              priorities: body.priorities,
+            });
+      if (id === "inspect") {
+        if (selection || body.priorities !== undefined)
+          throw new AppError("清点不接受选页模式，请重新检查工作表");
+        data = await inspectExcel(buffer, file.fileName, db.generation);
+      } else {
+        if (
+          !selection &&
+          (body.selectedSheetIds !== undefined ||
+            body.inspectionToken !== undefined ||
+            body.priorities !== undefined)
+        )
+          throw new AppError("选择工作表时必须提供明确模式");
+        data = await previewExcel(buffer, file.fileName, db, selection);
+      }
     } else if (
+      resource === "imports" &&
+      id === "diff" &&
+      request.method === "POST"
+    )
+      data = previewImportDiff(db, body);
+    else if (
       resource === "imports" &&
       id === "commit" &&
       request.method === "POST"
     )
       data = commitExcel(db, body);
-    else if (resource === "sources" && request.method === "POST" && !id)
+    else if (resource === "sources" && request.method === "POST" && !id) {
+      z.boolean().optional().parse(body.allowSameName);
       data = db.createSource(body);
-    else if (resource === "sources" && request.method === "PATCH" && id)
+    } else if (resource === "sources" && request.method === "PATCH" && id)
       data = db.updateSource(
         id,
         body.data,
         z.number().int().positive().parse(body.version),
         z.enum(["active", "archived"]).optional().parse(body.lifecycle),
+        z.boolean().optional().parse(body.allowSameName),
       );
     else if (resource === "drafts" && request.method === "POST" && !id)
       data = db.createDraft(z.uuid().parse(body.id), body.data);

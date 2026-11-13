@@ -235,6 +235,19 @@ export class Store {
       const data = sourceSchema.parse(input);
       const old = this.one("SELECT id FROM sources WHERE id=?", data.id);
       if (old) return this.getSource(data.id);
+      if (
+        (input as { allowSameName?: boolean }).allowSameName !== true &&
+        this.sources().some(
+          (s) =>
+            s.type === data.type &&
+            normalize(s.title) === normalize(data.title),
+        )
+      )
+        throw new AppError(
+          "已有同名来源，请使用已有来源，或明确新建独立来源",
+          409,
+          "SOURCE_EXISTS",
+        );
       const time = now();
       this.db
         .prepare(
@@ -249,11 +262,27 @@ export class Store {
     input: unknown,
     version: number,
     lifecycle?: string,
+    allowSameName = false,
   ) {
     return this.transaction(() => {
       const old = this.getSource(id);
       this.checkVersion(old.version, version);
       const data = sourceSchema.parse({ ...(input as object), id });
+      if (
+        !allowSameName &&
+        normalize(data.title) !== normalize(old.title) &&
+        this.sources().some(
+          (s) =>
+            s.id !== id &&
+            s.type === data.type &&
+            normalize(s.title) === normalize(data.title),
+        )
+      )
+        throw new AppError(
+          "已有同名来源，请合并来源或明确保留同名",
+          409,
+          "SOURCE_EXISTS",
+        );
       if (data.type !== old.type)
         throw new AppError("来源类型不可修改，请新建来源");
       if (lifecycle && !["active", "archived"].includes(lifecycle))

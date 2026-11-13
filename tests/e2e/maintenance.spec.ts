@@ -93,7 +93,11 @@ test("saved editing, context counts, recycle bin and JSON snapshot recovery thro
     .getByRole("button", { name: "表达移入回收站", exact: true })
     .click();
   await page.getByRole("button", { name: /本地工作空间/ }).click();
-  await page.getByRole("button", { name: "恢复表达", exact: true }).click();
+  await page
+    .locator(".maintenance-row")
+    .filter({ hasText: "maintain momentum · 持续保持动力" })
+    .getByRole("button", { name: "恢复表达", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: "取消归档", exact: true }),
   ).toBeVisible();

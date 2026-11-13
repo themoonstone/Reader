@@ -187,6 +187,7 @@ test("All business GET/POST/PATCH endpoints fail before SQLite access without a 
   try {
     for (const path of [
       "sources",
+      `sources/${randomUUID()}/flashcards`,
       "drafts",
       "expressions",
       "trash",
@@ -205,7 +206,12 @@ test("All business GET/POST/PATCH endpoints fail before SQLite access without a 
         "sources",
         "drafts",
         "expressions/" + randomUUID(),
+        "imports/inspect",
         "imports/preview",
+        "imports/diff",
+        "imports/commit",
+        "sources/merge-preview",
+        "sources/merge",
         "backup/export",
         "backup/preview",
         "backup/restore",

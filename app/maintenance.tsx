@@ -398,6 +398,13 @@ function SavedEditor({
                     onChange={(ev) => set("sentence", ev.target.value)}
                   />
                 </Field>
+                <Field label="原句中的实际词形（用于高亮，可选）">
+                  <input
+                    maxLength={200}
+                    value={data.targetSurface}
+                    onChange={(ev) => set("targetSurface", ev.target.value)}
+                  />
+                </Field>
                 <Field label="语境释义 *">
                   <textarea
                     required

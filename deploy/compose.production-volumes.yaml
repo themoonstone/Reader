@@ -1,0 +1,12 @@
+# Use only for a validated migration into pre-existing data and TLS volumes.
+# Stop the previous proxy before starting the new proxy on ports 80/443.
+volumes:
+  learning-data:
+    external: true
+    name: ${READWORDS_DATA_VOLUME:?set verified existing learning data volume}
+  caddy-data:
+    external: true
+    name: ${READWORDS_CADDY_DATA_VOLUME:?set verified existing Caddy data volume}
+  caddy-config:
+    external: true
+    name: ${READWORDS_CADDY_CONFIG_VOLUME:?set verified existing Caddy config volume}

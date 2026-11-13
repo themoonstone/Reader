@@ -41,7 +41,12 @@ export function farmType(
   return /\s/.test(term.trim()) ? "phrase" : "word";
 }
 /** Separate adapter: never changes bebe-strict-v1 headers, row keys or mappings. */
-export function parseLittleFarm(workbook: ExcelJS.Workbook, fileName: string) {
+export function parseLittleFarm(
+  workbook: ExcelJS.Workbook,
+  fileName: string,
+  validateAll = false,
+  priorities: readonly string[] = ["P1"],
+) {
   if (!workbook.worksheets.some(isFarm)) return null;
   if (
     workbook.worksheets.some((s) => {
@@ -98,7 +103,7 @@ export function parseLittleFarm(workbook: ExcelJS.Workbook, fileName: string) {
       all.push({ term, priority });
       counts[priority]++;
       if (all.length > 5000) throw new AppError("最多支持 5,000 行章节明细");
-      if (priority !== "P1") continue;
+      if (priority !== "P1" && !validateAll) continue;
       const meaning = text(row, "中文释义"),
         english = text(row, "本书语境义（英文）"),
         sentence = text(row, "原文片段"),
@@ -126,7 +131,7 @@ export function parseLittleFarm(workbook: ExcelJS.Workbook, fileName: string) {
         sourceType: "Reading",
         meaning,
         expressionType: farmType(term, originalType),
-        priority: "P1",
+        priority,
         eventKind: "exposure",
         whySaved: "useful",
         sentence,
@@ -155,6 +160,7 @@ export function parseLittleFarm(workbook: ExcelJS.Workbook, fileName: string) {
           simpleParaphrase: text(row, "简单英文释义 / 改写"),
         },
       });
+      if (!priorities.includes(priority)) continue;
       rows.push({
         key: rowKey,
         sheet: sheet.name,
