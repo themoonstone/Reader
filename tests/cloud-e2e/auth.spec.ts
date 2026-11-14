@@ -156,6 +156,13 @@ test("Private email login, API protection, refresh cookies, original source work
   await expect(page).toHaveURL(/\/login$/);
   expect((await page.request.get("/api/sources")).status()).toBe(401);
   expect((await page.request.get("/api/backup/status")).status()).toBe(401);
+  expect(
+    (
+      await page.request.get(
+        "/api/sources/00000000-0000-4000-8000-000000000000/flashcards?mode=cloze&limit=5",
+      )
+    ).status(),
+  ).toBe(401);
   await page.getByLabel("邮箱", { exact: true }).fill("owner@example.test");
   await page.getByLabel("密码", { exact: true }).fill("bad-password");
   await page.getByRole("button", { name: "登录", exact: true }).click();

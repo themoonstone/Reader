@@ -4,6 +4,52 @@ import { randomUUID } from "node:crypto";
 import { Store } from "../lib/store";
 import { handle } from "../lib/http";
 import { exportBackup } from "../lib/backup";
+import { makeCloze, normalizeClozeAnswer } from "../lib/cloze";
+
+test("original-sentence cloze preserves the actual form and rejects ambiguous or leaking blanks", () => {
+  assert.deepEqual(
+    makeCloze(
+      "I thought it had gone to waste.",
+      "go to waste",
+      "gone to waste",
+    ),
+    { before: "I thought it had ", answer: "gone to waste", after: "." },
+  );
+  assert.deepEqual(makeCloze("A Light box.", "light", ""), {
+    before: "A ",
+    answer: "Light",
+    after: " box.",
+  });
+  for (const [sentence, term, surface, occurrence] of [
+    ["", "light", ""],
+    ["Light!", "light", ""],
+    ["The freight was lightweight.", "light", "light"],
+    ["The freight was light-weight.", "light", "light"],
+    ["I can’t go.", "can", ""],
+    ["It had gone to waste.", "go to waste", ""],
+    ["It had gone to waste.", "go to waste", "Gone to waste"],
+    ["He walked and walked.", "walk", "walked", 2],
+    ["He walked alone.", "walk", "walked", 2],
+    ["Light after light appeared.", "light", ""],
+    ["I walk to work. He walked home.", "walk", "walked"],
+    [
+      "They take a break, then took a break again.",
+      "take a break",
+      "took a break",
+    ],
+    [
+      "They said it had gone to waste, but GONE  TO WASTE is too strong.",
+      "go to waste",
+      "gone to waste",
+    ],
+  ] satisfies [string, string, string, number?][])
+    assert.equal(
+      makeCloze(sentence, term, surface, occurrence),
+      undefined,
+      sentence,
+    );
+  assert.equal(normalizeClozeAnswer("  DON’T   GIVE\nUP  "), "don't give up");
+});
 
 test("book flashcards are read-only, scoped to active contexts in the chosen chapter and deduplicate by sense", async () => {
   const db = new Store(":memory:");
@@ -44,6 +90,15 @@ test("book flashcards are read-only, scoped to active contexts in the chosen cha
       }).expressionId!;
     }
     const id = add("go to waste", "白费", "Chapter 8", "It went to waste.");
+    add(
+      "go to waste",
+      "白费",
+      "Chapter 8",
+      "It would go to waste after it went to waste.",
+      "P3",
+      book.id,
+      id,
+    );
     add("go to waste", "白费", "Chapter 8", "", "P3", book.id, id);
     add(
       "go to waste",
@@ -77,9 +132,13 @@ test("book flashcards are read-only, scoped to active contexts in the chosen cha
     assert.equal(result.headers.get("cache-control"), "no-store");
     const data = await result.json();
     assert.equal(data.cards.length, 3);
-    assert.equal(
+    assert.match(
       data.cards.find((c: { id: string }) => c.id === id).sentence,
-      "It went to waste.",
+      /^(It went to waste\.|It would go to waste after it went to waste\.)$/,
+    );
+    assert.equal(
+      data.cards.some((c: { cloze?: unknown }) => c.cloze),
+      false,
     );
     assert.equal(
       data.cards.find((c: { id: string }) => c.id === id).surface,
@@ -103,6 +162,25 @@ test("book flashcards are read-only, scoped to active contexts in the chosen cha
     );
     assert.equal((await read("?limit=21")).status, 400);
     assert.equal((await read("?limit=10&priority=invalid")).status, 400);
+    assert.equal((await read("?limit=10&mode=invalid")).status, 400);
+    const cloze = await (
+      await read("?mode=cloze&limit=5&chapter=Chapter+8&priority=P3")
+    ).json();
+    assert.equal(cloze.cards.length, 3);
+    assert.equal(
+      new Set(cloze.cards.map((card: { id: string }) => card.id)).size,
+      3,
+    );
+    assert.deepEqual(
+      cloze.cards.find((card: { id: string }) => card.id === id).cloze,
+      {
+        before: "It ",
+        answer: "went to waste",
+        after: ".",
+      },
+    );
+    assert.equal(cloze.cards[2].meaning, "灯");
+    assert.equal(cloze.cards[2].cloze, undefined);
     const write = await handle(
       new Request(`http://127.0.0.1:3000/api/${path.join("/")}`, {
         method: "PATCH",

@@ -124,6 +124,52 @@ test("book flashcards on mobile: scoped P3, highlighter, reveal, skip and no Rev
   await page.getByRole("button", { name: "显示释义", exact: true }).click();
   await page.getByRole("button", { name: "结束本轮", exact: true }).click();
   await expect(page.getByLabel("闪卡章节")).toHaveValue(":Chapter 8");
+
+  await page.getByLabel("练习方式").selectOption("cloze");
+  await page.getByRole("button", { name: "开始填空", exact: true }).click();
+  const question = page.getByRole("article", { name: "当前填空题" });
+  const guess = page.getByLabel("填入英语原文");
+  const check = page.getByRole("button", { name: "核对原文", exact: true });
+  await expect(question.locator("blockquote")).toHaveText(
+    "All of that effort ____.",
+  );
+  await expect(
+    question.getByText(/go to waste|went to waste|闪卡测试中文答案/),
+  ).toHaveCount(0);
+  await expect(question.getByRole("heading")).toBeFocused();
+  await expect(check).toBeDisabled();
+  await guess.fill("WENT  TO WASTE ");
+  await guess.press("Enter");
+  await expect(card.getByRole("status")).toHaveText("与原文一致。");
+  await expect(card.locator("mark")).toHaveText("went to waste");
+  await expect(card).toContainText("Flashcard Book · Chapter 8 · p. 12");
+  await expect(card.getByLabel("闪卡答案")).toBeFocused();
+  await page.getByRole("button", { name: "下一张", exact: true }).click();
+  await expect(card).toContainText("没有原句");
+  await expect(page.getByText("这条语境改用普通闪卡。")).toBeVisible();
+  await previous.click();
+  await expect(guess).toHaveValue("");
+  await guess.fill("go to waste");
+  await check.click();
+  await expect(card.getByRole("status")).toContainText("与原文用词不同");
+  await page.getByRole("button", { name: "结束本轮", exact: true }).click();
+  await expect(page.getByLabel("练习方式")).toHaveValue("cloze");
+  await page.getByRole("button", { name: "开始填空", exact: true }).click();
+  await page.setViewportSize({ width: 320, height: 852 });
+  await expect(question).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: info.outputPath("book-cloze-320.png"),
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "显示答案", exact: true }).click();
+  await expect(card.getByText("went to waste", { exact: true })).toHaveCount(2);
+  await expect(card.getByRole("status")).toHaveCount(0);
+  await page.getByRole("button", { name: "结束本轮", exact: true }).click();
   await page.getByRole("button", { name: "← 返回原书", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Flashcard Book", exact: true }),

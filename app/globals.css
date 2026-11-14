@@ -1913,3 +1913,15 @@ mark.learning-target {
 .flashcard-controls button {
   min-height: 44px;
 }
+.cloze-blank {
+  color: var(--violet-dark);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.cloze-form {
+  margin-top: 1rem;
+}
+.cloze-form input {
+  min-height: 44px;
+  font-size: 1rem;
+}
