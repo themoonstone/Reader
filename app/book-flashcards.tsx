@@ -5,6 +5,13 @@ import { normalizeClozeAnswer } from "@/lib/cloze";
 import type { BookFlashcards } from "@/lib/flashcards";
 import { ErrorBox, Field } from "./components";
 import Flashcard from "./flashcard";
+import BookMatchRound from "./book-match-round";
+
+const startLabels = {
+  flashcard: "开始翻卡",
+  cloze: "开始填空",
+  match: "开始配对",
+};
 
 export default function BookFlashcardPage({
   sourceId,
@@ -17,7 +24,8 @@ export default function BookFlashcardPage({
   const [chapter, setChapter] = useState("all");
   const [priority, setPriority] = useState("");
   const [limit, setLimit] = useState("10");
-  const [mode, setMode] = useState("flashcard");
+  const [pairLimit, setPairLimit] = useState("4");
+  const [mode, setMode] = useState<keyof typeof startLabels>("flashcard");
   const [retry, setRetry] = useState(0);
   const [round, setRound] = useState<BookFlashcards>();
   const [index, setIndex] = useState(0);
@@ -50,6 +58,7 @@ export default function BookFlashcardPage({
   }, [route, retry]);
   const card = round?.cards[index];
   const cloze = card?.cloze;
+  const scopeLabel = `${chapter === "all" ? "全部章节" : chapter.slice(1) || "未标章节"} · ${priority || "全部等级"}`;
   useEffect(() => {
     if (card) heading.current?.focus();
   }, [card]);
@@ -69,16 +78,24 @@ export default function BookFlashcardPage({
     const request = ++version.current;
     setBusy(true);
     setError("");
-    const params = new URLSearchParams({ priority, limit, mode });
+    const params = new URLSearchParams({
+      priority,
+      limit: mode === "match" ? pairLimit : limit,
+      mode,
+    });
     if (chapter !== "all") params.set("chapter", chapter.slice(1));
     try {
       const data = await api<BookFlashcards>(`${route}?${params}`);
       if (request !== version.current) return;
       setCatalog(data);
-      if (!data.cards.length) {
+      if (!data.cards.length && !data.matching) {
         if (chapter !== "all" && !data.chapters.includes(chapter.slice(1)))
           setChapter("all");
-        setError("所选章节和等级没有可翻的闪卡，请调整范围。");
+        setError(
+          mode === "match"
+            ? "本轮未能凑出 4 对可区分的英中配对，可以重试或扩大范围。"
+            : "所选章节和等级没有可翻的闪卡，请调整范围。",
+        );
         return;
       }
       move(0);
@@ -164,7 +181,7 @@ export default function BookFlashcardPage({
         <button className="text-button" onClick={onBack}>
           ← 返回原书
         </button>
-        {round && (
+        {round && card && (
           <span role="status">
             {index + 1} / {round.cards.length}
           </span>
@@ -197,10 +214,15 @@ export default function BookFlashcardPage({
               <select
                 value={mode}
                 disabled={busy}
-                onChange={(e) => setMode(e.target.value)}
+                onChange={(e) => {
+                  const mode = e.target.value as keyof typeof startLabels;
+                  setMode(mode);
+                  setError("");
+                }}
               >
                 <option value="flashcard">普通闪卡</option>
                 <option value="cloze">原句填空</option>
+                <option value="match">英中配对</option>
               </select>
             </Field>
             <Field label="闪卡章节">
@@ -235,28 +257,51 @@ export default function BookFlashcardPage({
                 ))}
               </select>
             </Field>
-            <Field label="本轮最多几张">
-              <select
-                value={limit}
-                disabled={busy}
-                onChange={(e) => setLimit(e.target.value)}
-              >
-                {[5, 10, 20].map((n) => (
-                  <option key={n} value={n}>
-                    {n} 张
-                  </option>
-                ))}
-              </select>
-            </Field>
+            {mode === "match" ? (
+              <Field label="本轮最多几对">
+                <select
+                  value={pairLimit}
+                  disabled={busy}
+                  onChange={(e) => setPairLimit(e.target.value)}
+                >
+                  {[4, 5, 6].map((n) => (
+                    <option key={n} value={n}>
+                      {n} 对
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : (
+              <Field label="本轮最多几张">
+                <select
+                  value={limit}
+                  disabled={busy}
+                  onChange={(e) => setLimit(e.target.value)}
+                >
+                  {[5, 10, 20].map((n) => (
+                    <option key={n} value={n}>
+                      {n} 张
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
           </div>
           <button
             disabled={busy || !catalog.chapters.length}
             onClick={() => void start()}
           >
-            {busy ? "正在选卡…" : mode === "cloze" ? "开始填空" : "开始翻卡"}
+            {busy ? "正在准备…" : startLabels[mode]}
           </button>
           {!catalog.chapters.length && <p>本书还没有可翻的表达。</p>}
         </div>
+      )}
+      {round?.matching && (
+        <BookMatchRound
+          board={round.matching}
+          scope={scopeLabel}
+          onFinish={finish}
+        />
       )}
       {round && card && (
         <div
@@ -273,10 +318,7 @@ export default function BookFlashcardPage({
             }
           }}
         >
-          <p className="muted">
-            {chapter === "all" ? "全部章节" : chapter.slice(1) || "未标章节"} ·{" "}
-            {priority || "全部等级"}
-          </p>
+          <p className="muted">{scopeLabel}</p>
           {mode === "cloze" && !cloze && (
             <p className="muted">这条语境改用普通闪卡。</p>
           )}

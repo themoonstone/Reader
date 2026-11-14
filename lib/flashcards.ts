@@ -3,6 +3,7 @@ import { AppError, type Store } from "./store";
 import { z } from "zod";
 import { randomInt } from "node:crypto";
 import { makeCloze, type Cloze } from "./cloze";
+import { selectMatchCandidates, type BookMatching } from "./book-matching";
 
 export type BookCard = {
   id: string;
@@ -23,12 +24,17 @@ export type BookCard = {
   cloze?: Cloze;
 };
 
-const optionsSchema = z.object({
+const scope = z.object({
   chapter: z.string().max(200).nullable(),
   priority: z.enum(["", "P1", "P2", "P3"]),
-  limit: z.enum(["5", "10", "20"]).nullable(),
-  mode: z.enum(["flashcard", "cloze"]),
 });
+const optionsSchema = z.discriminatedUnion("mode", [
+  scope.extend({
+    mode: z.enum(["flashcard", "cloze"]),
+    limit: z.enum(["5", "10", "20"]).nullable(),
+  }),
+  scope.extend({ mode: z.literal("match"), limit: z.enum(["4", "5", "6"]) }),
+]);
 
 function sample<T>(entries: T[], limit: number) {
   const size = Math.min(entries.length, limit);
@@ -39,6 +45,14 @@ function sample<T>(entries: T[], limit: number) {
       [entries[i], entries[j]] = [entries[j], entries[i]];
     }
   return entries.slice(0, size);
+}
+
+function shuffle<T>(entries: T[]) {
+  for (let i = entries.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [entries[i], entries[j]] = [entries[j], entries[i]];
+  }
+  return entries;
 }
 
 export function bookFlashcards(
@@ -111,6 +125,39 @@ export function bookFlashcards(
   }
   const entries = [...chosen.entries()];
   const size = Number(limit);
+  const sortedChapters = [...chapters].sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true }),
+  );
+  if (mode === "match") {
+    const candidates = entries.map(([id, { term, meaning }]) => ({
+      id,
+      term,
+      meaning,
+    }));
+    let selected = selectMatchCandidates(shuffle(candidates), size);
+    // A conflicting candidate can block multiple options. Try a few orders
+    // when the first pass cannot fill the requested round.
+    for (let i = 0; i < 4 && selected.length < size; i++) {
+      const alternative = selectMatchCandidates(shuffle(candidates), size);
+      if (alternative.length > selected.length) selected = alternative;
+    }
+    let matching: BookMatching | undefined;
+    if (selected.length >= 4) {
+      const english = selected.map(({ id, term }) => ({ id, text: term }));
+      const chinese = shuffle(
+        selected.map(({ id, meaning }) => ({ id, text: meaning })),
+      );
+      if (chinese.every((option, i) => option.id === english[i].id))
+        chinese.push(chinese.shift()!);
+      matching = { english, chinese };
+    }
+    return {
+      title: source.title,
+      chapters: sortedChapters,
+      cards: [] as BookCard[],
+      matching,
+    };
+  }
   let selected = entries;
   if (mode === "cloze") {
     const questions = sample(
@@ -152,9 +199,7 @@ export function bookFlashcards(
   );
   return {
     title: source.title,
-    chapters: [...chapters].sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true }),
-    ),
+    chapters: sortedChapters,
     cards,
   };
 }
