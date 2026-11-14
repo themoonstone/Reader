@@ -75,6 +75,8 @@ export const draftSchema = z.object({
   sourceType: z.enum(sourceTypes),
   sourceId: z.union([z.uuid(), z.literal("")]).default(""),
   sentence: text(10000).default(""),
+  sentenceTranslation: text(3000).optional(),
+  chineseHint: text(1000).optional(),
   meaning: text().default(""),
   expressionType: z
     .enum(["word", "phrase", "collocation", "chunk", "sentence_pattern"])

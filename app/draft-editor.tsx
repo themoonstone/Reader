@@ -14,6 +14,7 @@ import {
   type Expression,
 } from "@/lib/contracts";
 import { ErrorBox, Field, Modal, SourceForm } from "./components";
+import ChineseContextFields from "./chinese-context-fields";
 
 export default function DraftEditor({
   draft,
@@ -260,6 +261,9 @@ export default function DraftEditor({
                   maxLength={10000}
                 />
               </Field>
+              {data.sourceType === "Reading" && (
+                <ChineseContextFields data={data} onChange={set} />
+              )}
               {data.sourceType === "Reading" && (
                 <div className="form-grid">
                   <Field label="章节">

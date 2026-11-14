@@ -3,12 +3,15 @@ import { AppError, type Store } from "./store";
 import { z } from "zod";
 import { randomInt } from "node:crypto";
 import { makeCloze, type Cloze } from "./cloze";
+import { choiceForm, clozeDistractors } from "./cloze-choices";
 import { selectMatchCandidates, type BookMatching } from "./book-matching";
 
 export type BookCard = {
   id: string;
   term: string;
   sentence: string;
+  sentenceTranslation?: string;
+  chineseHint?: string;
   surface: string;
   occurrence?: number;
   meaning: string;
@@ -21,7 +24,7 @@ export type BookCard = {
   exampleChinese?: string;
   exampleSource?: string;
   note: string;
-  cloze?: Cloze;
+  cloze?: Cloze & { options?: string[] };
 };
 
 const scope = z.object({
@@ -30,7 +33,7 @@ const scope = z.object({
 });
 const optionsSchema = z.discriminatedUnion("mode", [
   scope.extend({
-    mode: z.enum(["flashcard", "cloze"]),
+    mode: z.enum(["flashcard", "cloze", "cloze-choice"]),
     limit: z.enum(["5", "10", "20"]).nullable(),
   }),
   scope.extend({ mode: z.literal("match"), limit: z.enum(["4", "5", "6"]) }),
@@ -77,6 +80,9 @@ export function bookFlashcards(
     source.id,
   );
   const chapters = new Set<string>();
+  const choiceMode = mode === "cloze-choice";
+  const gapMode = choiceMode || mode === "cloze";
+  const bank = new Map<string, NonNullable<ReturnType<typeof choiceForm>>[]>();
   const chosen = new Map<
     string,
     {
@@ -84,22 +90,23 @@ export function bookFlashcards(
       term: string;
       meaning: string;
       rank: number;
-      cloze?: Cloze;
+      cloze?: BookCard["cloze"];
     }
   >();
   for (const row of rows) {
     const data = JSON.parse(String(row.data)) as DraftInput;
     chapters.add(data.chapter);
-    if (
-      !limit ||
-      (chapter !== null && chapter !== data.chapter) ||
-      (priority && priority !== row.priority)
-    )
-      continue;
+    if (!limit) continue;
+    const inScope =
+      (chapter === null || chapter === data.chapter) &&
+      (!priority || priority === row.priority);
+    if (!inScope && !choiceMode) continue;
     const status = data.importMetadata?.verificationStatus;
     const term = String(row.term);
+    const id = String(row.id);
+    const meaning = String(row.meaning);
     const cloze =
-      mode === "cloze" && status !== "待补充"
+      gapMode && status !== "待补充"
         ? makeCloze(
             data.sentence,
             term,
@@ -107,18 +114,32 @@ export function bookFlashcards(
             data.importMetadata?.highlightOccurrence,
           )
         : undefined;
+    if (choiceMode && cloze) {
+      const form = choiceForm({
+        id,
+        term,
+        meaning,
+        chapter: data.chapter,
+        cloze,
+      });
+      if (form) {
+        const group = bank.get(form.group) ?? [];
+        group.push(form);
+        bank.set(form.group, group);
+      }
+    }
+    if (!inScope) continue;
     const sentenceRank = !data.sentence.trim()
       ? 0
       : status === "已核对完整句" || status === "已核对节选"
         ? 2
         : 1;
     const rank = sentenceRank + (cloze ? 3 : 0);
-    const id = String(row.id);
     if ((chosen.get(id)?.rank ?? -1) < rank)
       chosen.set(id, {
         data,
         term,
-        meaning: String(row.meaning),
+        meaning,
         rank,
         cloze,
       });
@@ -159,7 +180,42 @@ export function bookFlashcards(
     };
   }
   let selected = entries;
-  if (mode === "cloze") {
+  if (choiceMode) {
+    for (const group of bank.values()) shuffle(group);
+    const questions: typeof entries = [],
+      fallback: typeof entries = [];
+    for (const entry of shuffle(entries)) {
+      const [id, card] = entry;
+      const {
+        term,
+        meaning,
+        cloze,
+        data: { chapter },
+      } = card;
+      const form = cloze && choiceForm({ id, term, meaning, chapter, cloze });
+      const group = form && (bank.get(form.group) ?? []);
+      const distractors =
+        form &&
+        group &&
+        (clozeDistractors(
+          form,
+          group.filter((candidate) => candidate.chapter === chapter),
+        ) ??
+          clozeDistractors(form, group));
+      if (cloze && distractors) {
+        card.cloze = {
+          ...cloze,
+          options: shuffle([cloze.answer, ...distractors]),
+        };
+        questions.push(entry);
+        if (questions.length === size) break;
+      } else {
+        card.cloze = undefined;
+        fallback.push(entry);
+      }
+    }
+    selected = questions.concat(fallback.slice(0, size - questions.length));
+  } else if (gapMode) {
     const questions = sample(
       entries.filter(([, entry]) => entry.cloze),
       size,
@@ -181,6 +237,10 @@ export function bookFlashcards(
         term,
         meaning,
         sentence: data.sentence,
+        sentenceTranslation: data.sentence.trim()
+          ? data.sentenceTranslation
+          : undefined,
+        chineseHint: data.sentence.trim() ? data.chineseHint : undefined,
         surface: data.targetSurface,
         occurrence: meta?.highlightOccurrence,
         contextMeaning: data.meaning,

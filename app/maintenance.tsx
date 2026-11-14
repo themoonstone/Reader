@@ -13,6 +13,7 @@ import {
   type Source,
 } from "@/lib/contracts";
 import { ErrorBox, Field, Modal } from "./components";
+import ChineseContextFields from "./chinese-context-fields";
 
 type Props = {
   expression: Expression;
@@ -405,6 +406,9 @@ function SavedEditor({
                     onChange={(ev) => set("targetSurface", ev.target.value)}
                   />
                 </Field>
+                {data.sourceType === "Reading" && (
+                  <ChineseContextFields data={data} onChange={set} />
+                )}
                 <Field label="语境释义 *">
                   <textarea
                     required

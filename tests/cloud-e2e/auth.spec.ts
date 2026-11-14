@@ -166,6 +166,13 @@ test("Private email login, API protection, refresh cookies, original source work
   expect(
     (
       await page.request.get(
+        "/api/sources/00000000-0000-4000-8000-000000000000/flashcards?mode=cloze-choice&limit=5",
+      )
+    ).status(),
+  ).toBe(401);
+  expect(
+    (
+      await page.request.get(
         "/api/sources/00000000-0000-4000-8000-000000000000/flashcards?mode=match&limit=4",
       )
     ).status(),

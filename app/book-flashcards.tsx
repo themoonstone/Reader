@@ -2,7 +2,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { normalizeClozeAnswer } from "@/lib/cloze";
-import type { BookFlashcards } from "@/lib/flashcards";
+import type { BookCard, BookFlashcards } from "@/lib/flashcards";
 import { ErrorBox, Field } from "./components";
 import Flashcard from "./flashcard";
 import BookMatchRound from "./book-match-round";
@@ -12,6 +12,25 @@ const startLabels = {
   cloze: "开始填空",
   match: "开始配对",
 };
+
+function ChineseContext({ card }: { card: BookCard }) {
+  return (
+    <div className="flashcard-note" lang="zh">
+      {card.sentenceTranslation && (
+        <>
+          <h3>原句中文译文</h3>
+          <p>{card.sentenceTranslation}</p>
+        </>
+      )}
+      {card.chineseHint && (
+        <>
+          <h3>中文语境提示</h3>
+          <p>{card.chineseHint}</p>
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function BookFlashcardPage({
   sourceId,
@@ -26,12 +45,14 @@ export default function BookFlashcardPage({
   const [limit, setLimit] = useState("10");
   const [pairLimit, setPairLimit] = useState("4");
   const [mode, setMode] = useState<keyof typeof startLabels>("flashcard");
+  const [clozeStyle, setClozeStyle] = useState("choice");
   const [retry, setRetry] = useState(0);
   const [round, setRound] = useState<BookFlashcards>();
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [guess, setGuess] = useState("");
   const [matchesOriginal, setMatchesOriginal] = useState<boolean>();
+  const [wrongOptions, setWrongOptions] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const version = useRef(0);
@@ -58,6 +79,7 @@ export default function BookFlashcardPage({
   }, [route, retry]);
   const card = round?.cards[index];
   const cloze = card?.cloze;
+  const options = cloze?.options;
   const scopeLabel = `${chapter === "all" ? "全部章节" : chapter.slice(1) || "未标章节"} · ${priority || "全部等级"}`;
   useEffect(() => {
     if (card) heading.current?.focus();
@@ -81,7 +103,7 @@ export default function BookFlashcardPage({
     const params = new URLSearchParams({
       priority,
       limit: mode === "match" ? pairLimit : limit,
-      mode,
+      mode: mode === "cloze" && clozeStyle === "choice" ? "cloze-choice" : mode,
     });
     if (chapter !== "all") params.set("chapter", chapter.slice(1));
     try {
@@ -113,6 +135,7 @@ export default function BookFlashcardPage({
   function move(next: number) {
     setGuess("");
     setMatchesOriginal(undefined);
+    setWrongOptions([]);
     setRevealed(false);
     setIndex(next);
   }
@@ -143,6 +166,9 @@ export default function BookFlashcardPage({
             <strong>{cloze.answer}</strong>
           </p>
         </>
+      )}
+      {(card.sentenceTranslation || card.chineseHint) && (
+        <ChineseContext card={card} />
       )}
       <h3>表达义项</h3>
       <p>{card.meaning || "未填写表达义项"}</p>
@@ -225,6 +251,21 @@ export default function BookFlashcardPage({
                 <option value="match">英中配对</option>
               </select>
             </Field>
+            {mode === "cloze" && (
+              <Field label="填空方式">
+                <select
+                  value={clozeStyle}
+                  disabled={busy}
+                  onChange={(e) => {
+                    setClozeStyle(e.target.value);
+                    setError("");
+                  }}
+                >
+                  <option value="choice">选择答案</option>
+                  <option value="input">输入答案</option>
+                </select>
+              </Field>
+            )}
             <Field label="闪卡章节">
               <select
                 value={chapter}
@@ -320,7 +361,11 @@ export default function BookFlashcardPage({
         >
           <p className="muted">{scopeLabel}</p>
           {mode === "cloze" && !cloze && (
-            <p className="muted">这条语境改用普通闪卡。</p>
+            <p className="muted">
+              {clozeStyle === "choice"
+                ? "这条记录无法组成可靠的选择题，改用普通闪卡。"
+                : "这条语境改用普通闪卡。"}
+            </p>
           )}
           {cloze && !revealed ? (
             <article className="flashcard" aria-label="当前填空题">
@@ -337,32 +382,76 @@ export default function BookFlashcardPage({
                 </span>
                 {cloze.after}
               </blockquote>
-              <form
-                className="cloze-form"
-                id={clozeFormId}
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const value = normalizeClozeAnswer(guess);
-                  if (!value) return;
-                  setMatchesOriginal(
-                    value === normalizeClozeAnswer(cloze.answer),
-                  );
-                  setRevealed(true);
-                }}
-              >
-                <Field label="填入英语原文">
-                  <input
-                    lang="en"
-                    value={guess}
-                    onChange={(e) => setGuess(e.target.value)}
-                    autoComplete="off"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    maxLength={500}
-                  />
-                </Field>
-              </form>
+              {options && (card.sentenceTranslation || card.chineseHint) && (
+                <details key={card.id} className="cloze-form">
+                  <summary>中文提示</summary>
+                  <ChineseContext card={card} />
+                </details>
+              )}
+              {options ? (
+                <div
+                  className="cloze-options"
+                  role="group"
+                  aria-label="选择原句答案"
+                >
+                  {options.map((option) => {
+                    const wrong = wrongOptions.includes(option);
+                    return (
+                      <button
+                        className="secondary"
+                        type="button"
+                        key={option}
+                        aria-disabled={wrong}
+                        onClick={() => {
+                          if (wrong) return;
+                          if (option === cloze.answer) {
+                            setMatchesOriginal(true);
+                            setRevealed(true);
+                          } else
+                            setWrongOptions((previous) => [
+                              ...previous,
+                              option,
+                            ]);
+                        }}
+                      >
+                        <span lang="en">{option}</span>
+                        {wrong && <span>（与原文不同）</span>}
+                      </button>
+                    );
+                  })}
+                  <p role="status">
+                    {wrongOptions.length > 0 &&
+                      "与原文用词不同，可以再选一次。"}
+                  </p>
+                </div>
+              ) : (
+                <form
+                  className="cloze-form"
+                  id={clozeFormId}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const value = normalizeClozeAnswer(guess);
+                    if (!value) return;
+                    setMatchesOriginal(
+                      value === normalizeClozeAnswer(cloze.answer),
+                    );
+                    setRevealed(true);
+                  }}
+                >
+                  <Field label="填入英语原文">
+                    <input
+                      lang="en"
+                      value={guess}
+                      onChange={(e) => setGuess(e.target.value)}
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      maxLength={500}
+                    />
+                  </Field>
+                </form>
+              )}
             </article>
           ) : (
             <Flashcard
@@ -383,7 +472,7 @@ export default function BookFlashcardPage({
             >
               上一张
             </button>
-            {!revealed && cloze && (
+            {!revealed && cloze && !options && (
               <button type="submit" form={clozeFormId} disabled={!guess.trim()}>
                 核对原文
               </button>

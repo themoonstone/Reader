@@ -1925,6 +1925,25 @@ mark.learning-target {
   min-height: 44px;
   font-size: 1rem;
 }
+.cloze-options {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.cloze-options button {
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.cloze-options button[aria-disabled="true"] {
+  background: var(--soft);
+  cursor: default;
+}
+.cloze-options p {
+  margin: 0;
+}
+.book-flashcard-round:has(.cloze-options) .flashcard-controls {
+  position: static;
+}
 .book-match-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

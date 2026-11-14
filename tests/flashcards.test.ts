@@ -3,8 +3,101 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { Store } from "../lib/store";
 import { handle } from "../lib/http";
-import { exportBackup } from "../lib/backup";
+import { exportBackup, validateBackup } from "../lib/backup";
 import { makeCloze, normalizeClozeAnswer } from "../lib/cloze";
+import { choiceForm, clozeDistractors } from "../lib/cloze-choices";
+
+test("backup validation accepts older contexts and preserves optional Chinese context fields", () => {
+  const db = new Store(":memory:");
+  try {
+    const source = db.createSource({
+      id: randomUUID(),
+      title: "Reading",
+      type: "Reading",
+    });
+    const chinese = {
+      sentenceTranslation: "我们先休息。",
+      chineseHint: "说话人在提议暂停。",
+    };
+    for (const [term, extra] of [
+      ["take a break", chinese],
+      ["rest", {}],
+    ] as const) {
+      const draft = db.createDraft(randomUUID(), {
+        term,
+        sourceId: source.id,
+        sourceType: "Reading",
+        sentence: `Let's ${term}.`,
+        meaning: "休息",
+        ...extra,
+      });
+      db.saveDraft(draft.id, { version: 1, newSense: true });
+    }
+    const backup = validateBackup(exportBackup(db));
+    const current = backup.contexts.find(
+      (context) => context.data.term === "take a break",
+    )!.data;
+    assert.equal(current.sentenceTranslation, chinese.sentenceTranslation);
+    assert.equal(current.chineseHint, chinese.chineseHint);
+    assert.equal(
+      backup.contexts.find((context) => context.data.term === "rest")!.data
+        .chineseHint,
+      undefined,
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("choice cloze excludes competing forms, glossary overlap and words already in the prompt", () => {
+  const form = (
+    term: string,
+    meaning: string,
+    answer: string,
+    before = "The effort had ",
+    after = ".",
+  ) =>
+    choiceForm({
+      id: term,
+      term,
+      meaning,
+      chapter: "",
+      cloze: { before, after, answer },
+    });
+  const target = form(
+    "go to waste",
+    "白费；被浪费",
+    "gone to waste",
+    "My previous work had ",
+    ", even though it had led to change before.",
+  )!;
+  const variants = [
+    form("waste away slowly", "逐渐衰弱", "wasted away slowly"),
+    form("go to pot", "白费；毁掉", "gone to pot"),
+    form("lead to change", "带来变化", "led to change"),
+    form("amount to nothing", "白费；毫无结果", "amounted to nothing"),
+    form("wind down", "逐渐结束", "wound down", "The effort "),
+    form("break down", "发生故障", "broken down"),
+    form("settle in", "安顿下来", "settled in"),
+    form("come to a halt", "停止运转", "come to a halt"),
+  ].filter((form) => form !== undefined);
+  assert.equal(form("be wasted", "消耗掉", "been wasted"), undefined);
+  assert.equal(
+    form("come to a halt", "停止运转", "come to a halt"),
+    undefined,
+    "unchanged participles with no reliable form cue are omitted",
+  );
+  // The two-word phrases are a different shape from this three-word phrase.
+  assert.equal(clozeDistractors(target, variants), undefined);
+  const others = [
+    form("fall into place", "终于就绪", "fallen into place")!,
+    form("turn to stone", "化为石头", "turned to stone")!,
+  ];
+  assert.deepEqual(clozeDistractors(target, [...variants, ...others]), [
+    "fallen into place",
+    "turned to stone",
+  ]);
+});
 
 test("original-sentence cloze preserves the actual form and rejects ambiguous or leaking blanks", () => {
   assert.deepEqual(
@@ -181,6 +274,12 @@ test("book flashcards are read-only, scoped to active contexts in the chosen cha
     );
     assert.equal(cloze.cards[2].meaning, "灯");
     assert.equal(cloze.cards[2].cloze, undefined);
+    const choices = await (
+      await read("?mode=cloze-choice&limit=5&chapter=Chapter+8&priority=P3")
+    ).json();
+    assert.equal(choices.cards.length, 3);
+    assert(choices.cards.every((card: { cloze?: unknown }) => !card.cloze));
+    assert.equal((await read("?mode=cloze-choice&limit=4")).status, 400);
     const write = await handle(
       new Request(`http://127.0.0.1:3000/api/${path.join("/")}`, {
         method: "PATCH",
